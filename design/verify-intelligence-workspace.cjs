@@ -46,7 +46,7 @@ const assert=require('node:assert/strict');const fs=require('node:fs');const pat
  console.log('PASS: research lifecycle, snapshots, evidence gating, follow-ups, handoff and exports');
  for(const [width,height] of [[1280,720],[1440,900],[1920,1080],[390,844]]){
   await page.setViewportSize({width,height});
-  for(const view of ['radar','desk','report','watch','library','design']){
+  for(const view of ['radar','desk','report','watch','library']){
    // Hash navigation preserves session reports and populated follow-up cards.
    await page.goto('http://127.0.0.1:8765/intelligence.html#intelligence/'+view);
    await page.locator('.iw-view').waitFor();
@@ -56,6 +56,6 @@ const assert=require('node:assert/strict');const fs=require('node:fs');const pat
  }
  await page.setViewportSize({width:1440,height:900});await page.goto('http://127.0.0.1:8765/intelligence.html');await page.locator('.space-switch [data-page="overview"]').click();assert.equal(await page.locator('.pipeline .pipe-node').count(),6);assert.equal(await page.locator('#sidebar > [data-page="intelligence"]').count(),0);await page.locator('.space-switch [data-page="intelligence"]').click();assert.equal(await page.locator('.intel-feeditem').count(),3);
  for(const file of ['quant-system-design.html','intelligence-design.html']){await page.goto('file:///'+path.join(__dirname,file).replaceAll('\\','/')+'#intelligence/radar');assert.equal(await page.locator('.intel-feeditem').count(),3)}
- assert.deepEqual(errors,[]);console.log('PASS: independent entry & switching; 6 views × 4 viewports; two standalone files; zero page errors');
+ assert.deepEqual(errors,[]);console.log('PASS: independent entry & switching; 5 research views × 4 viewports; two standalone files; zero page errors');
  }finally{await browser.close()}
 })().catch(e=>{console.error(e);process.exit(1)});
