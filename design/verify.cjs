@@ -1,0 +1,26 @@
+const { chromium }=require('./.qa/node_modules/playwright');
+const fs=require('node:fs');const path=require('node:path');
+(async()=>{
+const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true,args:['--no-sandbox','--disable-gpu']});
+const page=await browser.newPage({viewport:{width:1440,height:1060}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
+await page.goto('http://127.0.0.1:8765');
+await page.screenshot({path:path.join(__dirname,'preview-overview.png'),fullPage:true});
+for(const id of ['overview','data','compute','factors','selection','dataset','training','strategy','backtest','monitor','tasks','blueprint']){
+await page.locator('#sidebar [data-page="'+id+'"]').click();await page.locator('h1').waitFor();
+if(await page.locator('#content').innerText().then(s=>s.includes('undefined')||s.includes('页面加载异常')))throw new Error(id+' rendering failed');
+console.log('PAGE OK '+id);
+}
+await page.locator('#sidebar [data-page="data"]').click();for(const tab of ['market','quality','integration','assets'])await page.locator('[data-action="data-tab"][data-value="'+tab+'"]').click();
+await page.locator('#sidebar [data-page="factors"]').click();await page.locator('#factor-search').fill('mom20');if(await page.locator('[data-factor]').count()!==1)throw new Error('Factor filter');await page.locator('[data-action="factor-detail"][data-id="mom20"]').click();await page.locator('#overlay [data-action="close-modal"]').click();await page.locator('#factor-search').fill('');await page.screenshot({path:path.join(__dirname,'preview-factors.png'),fullPage:true});
+await page.locator('#sidebar [data-page="selection"]').click();await page.locator('[data-action="run-selection"]').click();await page.locator('[data-action="save-feature-set"]').click();await page.locator('#overlay [data-page="dataset"]').click();await page.locator('[data-action="save-dataset"]').click();
+await page.locator('#sidebar [data-page="training"]').click();await page.locator('#model-algorithm').selectOption('Ridge');if(await page.locator('#model-alpha').count()!==1)throw new Error('Ridge parameters');await page.locator('#model-algorithm').selectOption('LightGBM');for(const tab of ['importance','folds','artifacts','experiments'])await page.locator('[data-action="training-tab"][data-value="'+tab+'"]').first().click();await page.locator('[data-action="run-training"]').click();
+await page.locator('#sidebar [data-page="strategy"]').click();await page.locator('#strategy-source').selectOption({index:1});await page.locator('#strategy-factorMOM').fill('50');await page.locator('#strategy-factorMOM').press('Tab');if(await page.locator('#strategy-factorMOM').inputValue()!=='50')throw new Error('Weights persist');await page.locator('#strategy-factorMOM').fill('40');await page.locator('#strategy-factorMOM').press('Tab');await page.locator('#strategy-excludeST').uncheck();if(await page.locator('#strategy-excludeST').isChecked())throw new Error('Checkbox persist');await page.locator('[data-action="save-strategy"]').click();
+await page.locator('#sidebar [data-page="backtest"]').click();for(const tab of ['drawdown','monthly','trades','audit','overview'])await page.locator('[data-action="backtest-tab"][data-value="'+tab+'"]').click();await page.screenshot({path:path.join(__dirname,'preview-backtest.png'),fullPage:true});
+const [download]=await Promise.all([page.waitForEvent('download'),page.locator('[data-action="export-backtest"]').click()]);await download.saveAs(path.join(__dirname,'.qa/export-test.json'));JSON.parse(fs.readFileSync(path.join(__dirname,'.qa/export-test.json'),'utf8'));
+await page.locator('#sidebar [data-page="monitor"]').click();await page.locator('[data-action="monitor-alerts"]').click();await page.locator('[data-action="save-alerts"]').click();
+await page.locator('#sidebar [data-page="blueprint"]').click();await page.locator('details summary').first().click();await page.screenshot({path:path.join(__dirname,'preview-blueprint.png'),fullPage:true});
+await page.setViewportSize({width:390,height:844});await page.goto('http://127.0.0.1:8765/#overview');await page.screenshot({path:path.join(__dirname,'preview-mobile.png'),fullPage:true});const sizes=await page.evaluate(()=>({viewport:innerWidth,width:document.documentElement.scrollWidth}));if(sizes.width>sizes.viewport+2)throw new Error('Mobile overflow '+JSON.stringify(sizes));
+await page.goto('file:///'+path.join(__dirname,'quant-system-design.html').replaceAll('\\','/'));await page.locator('#content .pipeline').waitFor();
+for(const size of [{width:1366,height:768},{width:1440,height:900},{width:1920,height:1080}]){await page.setViewportSize(size);await page.goto('http://127.0.0.1:8765/#overview');const layout=await page.evaluate(()=>({viewport:innerWidth,width:document.documentElement.scrollWidth,zoom:getComputedStyle(document.body).zoom}));if(layout.width>layout.viewport+2)throw new Error('Desktop overflow '+JSON.stringify({size,layout}));if(Number(layout.zoom)>.83)throw new Error('Desktop density not applied '+JSON.stringify({size,layout}));}
+console.log('INTERACTIONS OK; STANDALONE OK; ERRORS '+JSON.stringify(errors));await browser.close();if(errors.length)process.exit(1);
+})().catch(e=>{console.error(e);process.exit(1)});
