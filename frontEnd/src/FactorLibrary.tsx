@@ -67,6 +67,7 @@ export default function FactorLibrary({ selected, onSelect, refreshKey = 0 }: {
         <button className={source === 'ALL' ? 'active' : ''} onClick={() => setSource('ALL')}>全部 <span>{counts?.total ?? 0}</span></button>
         <button className={source === 'CURRENT' ? 'active' : ''} onClick={() => setSource('CURRENT')}>现有因子 <span>{counts?.current ?? 0}</span></button>
         <button className={source === 'ALPHA158' ? 'active' : ''} onClick={() => setSource('ALPHA158')}>Alpha158 <span>{counts?.alpha158 ?? 0}</span></button>
+        <button className={source === 'JQDATA' ? 'active' : ''} onClick={() => setSource('JQDATA')}>JQDATA <span>{counts?.jqdata ?? 0}</span></button>
       </div>
 
       <div className="category-tabs">
@@ -91,7 +92,7 @@ export default function FactorLibrary({ selected, onSelect, refreshKey = 0 }: {
       {!loading && <div className="factor-card-grid">
         {data?.items.map((factor) => <article className={`factor-card status-${factor.status.toLowerCase()} ${selected?.factor_id === factor.factor_id ? 'selected-factor' : ''}`} key={`${factor.factor_id}-${factor.factor_version}`}>
           <div className="factor-card-head">
-            <span className={`source-tag ${factor.source_collection.toLowerCase()}`}>{factor.source_collection === 'ALPHA158' ? 'ALPHA158' : '现有'}</span>
+            <span className={`source-tag ${factor.source_collection.toLowerCase()}`}>{factor.source_collection === 'ALPHA158' ? 'ALPHA158' : factor.source_collection === 'JQDATA' ? 'JQDATA' : '现有'}</span>
             <span className="category-tag">{factor.category}</span>
             <span className="factor-status"><i />{factor.status_label}</span>
           </div>

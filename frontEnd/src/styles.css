@@ -88,6 +88,7 @@ main { min-height: 100vh; background: radial-gradient(circle at 82% 0%, rgba(199
 .source-tag, .category-tag { padding: 3px 6px; border-radius: 5px; color: #637068; background: #edf0ed; font: 8px 'DM Mono'; }
 .source-tag.alpha158 { color: #5b6827; background: #eaf5cc; }
 .source-tag.current { color: #146b48; background: #e1f1e8; }
+.source-tag.jqdata { color: #8a4b15; background: #fff0dc; }
 .factor-status { margin-left: auto; display: flex; gap: 6px; align-items: center; color: #7e8982; font-size: 9px; }
 .factor-status i { width: 6px; height: 6px; border-radius: 50%; background: #b0b7b2; }
 .status-m4_complete .factor-status { color: var(--green); }
@@ -373,3 +374,5 @@ select:focus, input:focus { border-color: #4b946f; box-shadow: 0 0 0 3px rgba(20
   .asset-footer { align-items: flex-start; flex-direction: column; }
   .asset-footer div { margin-left: 0; }
 }
+.factor-compute-error { margin-bottom: 14px; padding: 11px 13px; border: 1px solid #efc6a8; border-radius: 8px; background: #fff4eb; color: #8b4b27; display: flex; gap: 10px; align-items: baseline; }
+.factor-compute-error b { white-space: nowrap; }

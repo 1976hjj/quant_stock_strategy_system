@@ -94,6 +94,7 @@ export default function App() {
   const [error, setError] = useState('')
   const [selectedFactor, setSelectedFactor] = useState<FactorCatalogItem | null>(null)
   const [factorJob, setFactorJob] = useState<FactorJobStatus | null>(null)
+  const [factorError, setFactorError] = useState('')
   const [catalogRefresh, setCatalogRefresh] = useState(0)
 
   const release = options?.factor_releases.find((item) => item.release_id === releaseId)
@@ -165,6 +166,7 @@ export default function App() {
     if (!clearCurrentRunView()) return
     setSelectedFactor(factor)
     setFactorJob(null)
+    setFactorError('')
     if (factor.latest_release_id) {
       selectRelease(factor.latest_release_id)
     } else {
@@ -176,9 +178,10 @@ export default function App() {
   }
 
   const calculateSelectedFactor = async () => {
-    if (!selectedFactor || selectedFactor.source_collection !== 'ALPHA158') return
+    if (!selectedFactor || selectedFactor.source_collection === 'CURRENT') return
     setBusy(true)
     setError('')
+    setFactorError('')
     try {
       setFactorJob(await api.startFactorCalculation({
         factor_id: selectedFactor.factor_id,
@@ -187,10 +190,23 @@ export default function App() {
         end: windowEnd,
       }))
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason))
+      const message = reason instanceof Error ? reason.message : String(reason)
+      setError(message)
+      setFactorError(message)
     } finally {
       setBusy(false)
     }
+  }
+
+  const changeFactorDate = (edge: 'start' | 'end', value: string) => {
+    if (!clearCurrentRunView()) return
+    if (edge === 'start') setWindowStart(value)
+    else setWindowEnd(value)
+    // Once the requested range changes, the previously published release must
+    // not be used accidentally by M4. A successful calculation selects the new release.
+    setReleaseId('')
+    setFactorJob(null)
+    setFactorError('')
   }
 
   const selectRelease = (id: string) => {
@@ -301,13 +317,14 @@ export default function App() {
             <div className="section-head"><span>01</span><div><h2>选择本次运行因子</h2><p>从上面的目录选一个因子。未计算的先生成数值，完成后直接进入 M4；每个新因子都有自己的独立版本。</p></div></div>
             {!selectedFactor && <div className="run-target-empty">请先在上面的因子卡片中点击“选择并计算这个因子”。</div>}
             {selectedFactor && <div className="run-target">
-              <div><span>{selectedFactor.source_collection === 'ALPHA158' ? 'ALPHA158' : '现有因子'}</span><h3>{selectedFactor.chinese_name}</h3><code>{selectedFactor.external_name || selectedFactor.factor_id} · v{selectedFactor.factor_version}</code></div>
+              <div><span>{selectedFactor.source_collection === 'ALPHA158' ? 'ALPHA158' : selectedFactor.source_collection === 'JQDATA' ? 'JQDATA' : '现有因子'}</span><h3>{selectedFactor.chinese_name}</h3><code>{selectedFactor.external_name || selectedFactor.factor_id} · v{selectedFactor.factor_version}</code></div>
               <b className={selectedFactor.calculated ? 'ready' : ''}>{selectedFactor.status_label}</b>
             </div>}
-            {selectedFactor && !selectedFactor.calculated && <div className="factor-compute-box">
-              <p>这个因子目前只有公式，还没有因子值。先按你设定的日期范围单独计算并发布。</p>
-              <div className="compute-dates"><Field label="计算开始"><input type="date" value={windowStart} onChange={(event) => setWindowStart(event.target.value)} /></Field><Field label="计算结束"><input type="date" value={windowEnd} onChange={(event) => setWindowEnd(event.target.value)} /></Field></div>
-              <button className="primary compute-button" disabled={busy || factorJob?.status === 'RUNNING' || !windowStart || !windowEnd} onClick={calculateSelectedFactor}>{factorJob?.status === 'RUNNING' ? '正在计算因子值…' : '计算并发布这个因子'}</button>
+            {selectedFactor && selectedFactor.source_collection !== 'CURRENT' && <div className="factor-compute-box">
+              {factorError && <div className="factor-compute-error"><b>未开始计算</b><span>{factorError}</span></div>}
+              <p>{selectedFactor.calculated ? '这个因子已经有计算结果，日期仍可修改。重新计算完成后，新结果会成为当前使用版本。' : '这个因子目前只有公式，还没有因子值。先按你设定的日期范围单独计算并发布。'}</p>
+              <div className="compute-dates"><Field label="计算开始"><input type="date" value={windowStart} onChange={(event) => changeFactorDate('start', event.target.value)} /></Field><Field label="计算结束"><input type="date" value={windowEnd} onChange={(event) => changeFactorDate('end', event.target.value)} /></Field></div>
+              <button className="primary compute-button" disabled={busy || factorJob?.status === 'RUNNING' || !windowStart || !windowEnd || windowEnd < windowStart} onClick={calculateSelectedFactor}>{factorJob?.status === 'RUNNING' ? '正在计算因子值…' : selectedFactor.calculated ? '按此日期重新计算并替换当前版本' : '计算并发布这个因子'}</button>
               {factorJob && <div className={`compute-status ${factorJob.status.toLowerCase()}`}><div><b>{factorJob.status === 'RUNNING' ? factorJob.phase : factorJob.status === 'PASS' ? '计算完成' : factorJob.status === 'FAIL' ? '计算失败' : '已停止'}</b><strong>{factorJob.progress}%</strong></div><i><span style={{ width: `${factorJob.progress}%` }} /></i><small>{factorJob.log_tail ? factorJob.log_tail.split('\n').filter(Boolean).slice(-1)[0] : '任务已提交，完成后会自动切换到 M4。'}</small></div>}
             </div>}
             {release && <div className="release-summary">
