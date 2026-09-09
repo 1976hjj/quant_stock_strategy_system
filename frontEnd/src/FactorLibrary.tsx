@@ -80,6 +80,8 @@ export default function FactorLibrary({ selected, onSelect, refreshKey = 0 }: {
           <option value="ALL">全部计算状态</option>
           <option value="M4_COMPLETE">M4 已完成</option>
           <option value="CALCULATED">已算值，未跑完 M4</option>
+          <option value="CALCULATED_VERIFYING">准确性复核中</option>
+          <option value="ACCURACY_FAILED">准确性复核失败</option>
           <option value="NOT_CALCULATED">未计算</option>
         </select>
         <span className="filtered-count">当前显示 {data?.totalItems ?? 0} 个</span>
@@ -99,6 +101,7 @@ export default function FactorLibrary({ selected, onSelect, refreshKey = 0 }: {
           <h3>{factor.chinese_name}</h3>
           <code>{factor.external_name || factor.factor_id} · v{factor.factor_version}</code>
           <p>{factor.description}</p>
+          {factor.accuracy_status === 'FAIL' && <div className="accuracy-failure">准确性复核失败：{factor.accuracy_error || '该候选版本已停用'}</div>}
 
           <button className="factor-select" onClick={() => onSelect(factor)}>
             {selected?.factor_id === factor.factor_id ? '✓ 已选为本次运行对象' : factor.calculated ? '选择并复现这个因子' : '选择并计算这个因子'}

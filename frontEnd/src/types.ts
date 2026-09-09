@@ -68,7 +68,7 @@ export interface JobStatus {
 
 export type FactorCategory = '动量' | '波动' | '流动性' | '质量' | '估值' | '风格' | '量价' | '形态'
 export type FactorSource = 'ALL' | 'CURRENT' | 'ALPHA158' | 'JQDATA'
-export type FactorStatus = 'ALL' | 'M4_COMPLETE' | 'CALCULATED' | 'NOT_CALCULATED'
+export type FactorStatus = 'ALL' | 'M4_COMPLETE' | 'CALCULATED' | 'CALCULATED_VERIFYING' | 'ACCURACY_FAILED' | 'NOT_CALCULATED'
 
 export interface FactorResultSummary {
   mean_test_rank_ic: number | null
@@ -104,6 +104,8 @@ export interface FactorCatalogItem {
   release_count: number
   coverage: { start: string; end: string; coverage?: number | null } | null
   result: FactorResultSummary | null
+  accuracy_status: 'PENDING' | 'PASS' | 'FAIL' | 'NOT_REQUIRED' | null
+  accuracy_error: string | null
 }
 
 export interface FactorCatalogResponse {
@@ -150,6 +152,9 @@ export interface FactorJobStatus {
   log_tail: string
   phase: string
   progress: number
+  message: string
+  elapsed_seconds: number
+  accuracy_status: 'PENDING' | 'PASS' | 'FAIL' | 'NOT_REQUIRED' | null
 }
 
 export type FactorAssetStatus = 'ALL' | 'TESTED' | 'RAW_ONLY' | 'WITH_EXECUTION'

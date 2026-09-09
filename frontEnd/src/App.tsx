@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from './api'
 import FactorAssetLibrary from './FactorAssetLibrary'
 import FactorLibrary from './FactorLibrary'
+import StrategyBacktest, { STRATEGY_JOB_EVENT, STRATEGY_JOB_STORAGE_KEY } from './StrategyBacktest'
+import StrategyBacktestHistory from './StrategyBacktestHistory'
+import { strategyApi } from './strategyApi'
 import type { FactorCatalogItem, FactorJobStatus, FactorRelease, JobStatus, M4Options, PreflightResult, RunPayload, UiStageId } from './types'
 
 const STAGES: Array<{
@@ -37,6 +40,14 @@ const PIPELINE_NAMES: Record<string, string> = {
 }
 
 const DEFAULT_STAGES: UiStageId[] = ['m4_1', 'm4_2', 'm4_3', 'm4_4', 'm4_5']
+type View = 'CALCULATE' | 'ASSETS' | 'STRATEGY' | 'STRATEGY_HISTORY'
+const VIEW_STORAGE_KEY = 'alpha-research.current-view'
+const FACTOR_JOB_STORAGE_KEY = 'alpha-research.factor-job-id'
+
+function savedView(): View {
+  const value = window.localStorage.getItem(VIEW_STORAGE_KEY)
+  return value === 'ASSETS' || value === 'STRATEGY' || value === 'STRATEGY_HISTORY' ? value : 'CALCULATE'
+}
 
 function compactId(value: string) {
   return value.length > 24 ? `${value.slice(0, 13)}…${value.slice(-8)}` : value
@@ -54,6 +65,12 @@ function money(value: number) {
   return value.toLocaleString('zh-CN')
 }
 
+function formatDuration(totalSeconds: number) {
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return minutes ? `${minutes}分${seconds}秒` : `${seconds}秒`
+}
+
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <label className="field">
@@ -65,7 +82,8 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 }
 
 export default function App() {
-  const [view, setView] = useState<'CALCULATE' | 'ASSETS'>('CALCULATE')
+  const [view, setView] = useState<View>(savedView)
+  const [strategyRunning, setStrategyRunning] = useState(false)
   const [options, setOptions] = useState<M4Options | null>(null)
   const [releaseId, setReleaseId] = useState('')
   const [stages, setStages] = useState<UiStageId[]>(DEFAULT_STAGES)
@@ -94,11 +112,14 @@ export default function App() {
   const [error, setError] = useState('')
   const [selectedFactor, setSelectedFactor] = useState<FactorCatalogItem | null>(null)
   const [factorJob, setFactorJob] = useState<FactorJobStatus | null>(null)
+  const [factorSubmitting, setFactorSubmitting] = useState(false)
   const [factorError, setFactorError] = useState('')
   const [catalogRefresh, setCatalogRefresh] = useState(0)
 
   const release = options?.factor_releases.find((item) => item.release_id === releaseId)
   const executionSelected = stages.includes('m4_6')
+
+  useEffect(() => { window.localStorage.setItem(VIEW_STORAGE_KEY, view) }, [view])
 
   useEffect(() => {
     Promise.all([api.health(), api.options(), api.latest()])
@@ -114,6 +135,25 @@ export default function App() {
         else setLastJob(latest.job)
       })
       .catch((reason) => setError(`后端没有连上：${reason.message}`))
+  }, [])
+
+  useEffect(() => {
+    const refreshStrategyState = () => {
+      const jobId = window.localStorage.getItem(STRATEGY_JOB_STORAGE_KEY)
+      strategyApi.list()
+        .then(({ jobs }) => setStrategyRunning(jobs.some((item) => item.status === 'RUNNING')))
+        .catch(() => jobId
+          ? strategyApi.status(jobId).then((item) => setStrategyRunning(item.status === 'RUNNING')).catch(() => setStrategyRunning(false))
+          : setStrategyRunning(false))
+    }
+    const onJobChanged = (event: Event) => {
+      const job = (event as CustomEvent<{ status?: string }>).detail
+      setStrategyRunning(job?.status === 'RUNNING')
+    }
+    refreshStrategyState()
+    window.addEventListener(STRATEGY_JOB_EVENT, onJobChanged)
+    const timer = window.setInterval(refreshStrategyState, 3000)
+    return () => { window.removeEventListener(STRATEGY_JOB_EVENT, onJobChanged); window.clearInterval(timer) }
   }, [])
 
   useEffect(() => {
@@ -135,7 +175,53 @@ export default function App() {
   }, [job?.job_id, job?.status, selectedFactor?.factor_id])
 
   useEffect(() => {
-    if (!factorJob || factorJob.status !== 'RUNNING') return
+    const restoreFactorJob = async () => {
+      const storedJobId = window.localStorage.getItem(FACTOR_JOB_STORAGE_KEY)
+      let next: FactorJobStatus | null = null
+      try {
+        if (storedJobId) {
+          next = await api.factorCalculationStatus(storedJobId)
+        }
+        if (!next || next.status !== 'RUNNING') {
+          const latest = await api.latestFactorCalculation()
+          if (latest.job?.status === 'RUNNING') next = latest.job
+        }
+      } catch {
+        window.localStorage.removeItem(FACTOR_JOB_STORAGE_KEY)
+        return
+      }
+      if (!next) return
+      setFactorJob(next)
+      setWindowStart(next.start)
+      setWindowEnd(next.end)
+      if (next.status === 'RUNNING') window.localStorage.setItem(FACTOR_JOB_STORAGE_KEY, next.job_id)
+      const refreshed = await api.factorCatalog({ page: 1, pageSize: 100, query: next.factor_id })
+      const current = refreshed.items.find((item) => item.factor_id === next?.factor_id)
+      if (current) setSelectedFactor(current)
+    }
+    restoreFactorJob().catch((reason) => setFactorError(reason instanceof Error ? reason.message : String(reason)))
+  }, [])
+
+  useEffect(() => {
+    const discoverRunningJob = () => {
+      api.latestFactorCalculation().then(async ({ job: latest }) => {
+        if (!latest || latest.status !== 'RUNNING' || latest.job_id === factorJob?.job_id) return
+        setFactorJob(latest)
+        setWindowStart(latest.start)
+        setWindowEnd(latest.end)
+        window.localStorage.setItem(FACTOR_JOB_STORAGE_KEY, latest.job_id)
+        const refreshed = await api.factorCatalog({ page: 1, pageSize: 100, query: latest.factor_id })
+        const current = refreshed.items.find((item) => item.factor_id === latest.factor_id)
+        if (current) setSelectedFactor(current)
+      }).catch(() => undefined)
+    }
+    discoverRunningJob()
+    const timer = window.setInterval(discoverRunningJob, 3000)
+    return () => window.clearInterval(timer)
+  }, [factorJob?.job_id])
+
+  useEffect(() => {
+    if (!factorJob || (factorJob.status !== 'RUNNING' && factorJob.accuracy_status !== 'PENDING')) return
     const timer = window.setInterval(() => {
       api.factorCalculationStatus(factorJob.job_id).then(async (next) => {
         setFactorJob(next)
@@ -149,10 +235,10 @@ export default function App() {
           if (refreshed.items[0]) setSelectedFactor(refreshed.items[0])
           setCatalogRefresh((value) => value + 1)
         }
-      }).catch((reason) => setError(reason.message))
+      }).catch((reason) => setFactorError(reason.message))
     }, 1500)
     return () => window.clearInterval(timer)
-  }, [factorJob?.job_id, factorJob?.status])
+  }, [factorJob?.job_id, factorJob?.status, factorJob?.accuracy_status])
 
   const clearCurrentRunView = () => {
     if (job?.status === 'RUNNING') return false
@@ -164,8 +250,15 @@ export default function App() {
 
   const chooseFactor = (factor: FactorCatalogItem) => {
     if (!clearCurrentRunView()) return
+    if (factorSubmitting || factorJob?.status === 'RUNNING') {
+      if (factor.factor_id !== factorJob?.factor_id) {
+        setFactorError('当前因子任务正在提交或计算，请等待完成或先停止任务。')
+      }
+      return
+    }
     setSelectedFactor(factor)
     setFactorJob(null)
+    window.localStorage.removeItem(FACTOR_JOB_STORAGE_KEY)
     setFactorError('')
     if (factor.latest_release_id) {
       selectRelease(factor.latest_release_id)
@@ -179,22 +272,32 @@ export default function App() {
 
   const calculateSelectedFactor = async () => {
     if (!selectedFactor || selectedFactor.source_collection === 'CURRENT') return
-    setBusy(true)
+    setFactorSubmitting(true)
     setError('')
     setFactorError('')
     try {
-      setFactorJob(await api.startFactorCalculation({
+      const started = await api.startFactorCalculation({
         factor_id: selectedFactor.factor_id,
         factor_version: selectedFactor.factor_version,
         start: windowStart,
         end: windowEnd,
-      }))
+      })
+      setFactorJob(started)
+      window.localStorage.setItem(FACTOR_JOB_STORAGE_KEY, started.job_id)
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason)
-      setError(message)
       setFactorError(message)
     } finally {
-      setBusy(false)
+      setFactorSubmitting(false)
+    }
+  }
+
+  const stopFactorCalculation = async () => {
+    if (!factorJob || factorJob.status !== 'RUNNING') return
+    try {
+      setFactorJob(await api.stopFactorCalculation(factorJob.job_id))
+    } catch (reason) {
+      setFactorError(reason instanceof Error ? reason.message : String(reason))
     }
   }
 
@@ -302,13 +405,13 @@ export default function App() {
     <main>
       <header className="topbar">
         <div className="brand"><span className="brand-mark">M4</span><div><b>因子研究台</b><small>FACTOR EVIDENCE WORKBENCH</small></div></div>
-        <nav className="main-nav"><button className={view === 'CALCULATE' ? 'active' : ''} onClick={() => setView('CALCULATE')}>因子计算</button><button className={view === 'ASSETS' ? 'active' : ''} onClick={() => setView('ASSETS')}>因子资产库</button></nav>
+        <nav className="main-nav"><button className={view === 'CALCULATE' ? 'active' : ''} onClick={() => setView('CALCULATE')}>因子计算</button><button className={view === 'ASSETS' ? 'active' : ''} onClick={() => setView('ASSETS')}>因子资产库</button><button className={view === 'STRATEGY' ? 'active' : ''} onClick={() => setView('STRATEGY')}>策略回测{strategyRunning && <i className="nav-running-dot" />}</button><button className={view === 'STRATEGY_HISTORY' ? 'active' : ''} onClick={() => setView('STRATEGY_HISTORY')}>历史回测结果</button></nav>
         <div className={`api-state ${apiOnline ? 'online' : ''}`}><i />{apiOnline ? '计算后端已连接' : '计算后端未连接'}</div>
       </header>
 
       {error && <div className="error-banner"><b>没有继续执行</b><span>{error}</span><button onClick={() => setError('')}>×</button></div>}
 
-      {view === 'CALCULATE' ? <>
+      {view === 'STRATEGY' ? <StrategyBacktest /> : view === 'STRATEGY_HISTORY' ? <StrategyBacktestHistory onOpenRunning={() => setView('STRATEGY')} /> : view === 'CALCULATE' ? <>
       <FactorLibrary selected={selectedFactor} onSelect={chooseFactor} refreshKey={catalogRefresh} />
 
       <div className="workspace">
@@ -318,21 +421,27 @@ export default function App() {
             {!selectedFactor && <div className="run-target-empty">请先在上面的因子卡片中点击“选择并计算这个因子”。</div>}
             {selectedFactor && <div className="run-target">
               <div><span>{selectedFactor.source_collection === 'ALPHA158' ? 'ALPHA158' : selectedFactor.source_collection === 'JQDATA' ? 'JQDATA' : '现有因子'}</span><h3>{selectedFactor.chinese_name}</h3><code>{selectedFactor.external_name || selectedFactor.factor_id} · v{selectedFactor.factor_version}</code></div>
-              <b className={selectedFactor.calculated ? 'ready' : ''}>{selectedFactor.status_label}</b>
+              <b className={selectedFactor.accuracy_status === 'FAIL' ? 'failed' : selectedFactor.calculated ? 'ready' : ''}>{selectedFactor.status_label}</b>
             </div>}
             {selectedFactor && selectedFactor.source_collection !== 'CURRENT' && <div className="factor-compute-box">
               {factorError && <div className="factor-compute-error"><b>未开始计算</b><span>{factorError}</span></div>}
               <p>{selectedFactor.calculated ? '这个因子已经有计算结果，日期仍可修改。重新计算完成后，新结果会成为当前使用版本。' : '这个因子目前只有公式，还没有因子值。先按你设定的日期范围单独计算并发布。'}</p>
-              <div className="compute-dates"><Field label="计算开始"><input type="date" value={windowStart} onChange={(event) => changeFactorDate('start', event.target.value)} /></Field><Field label="计算结束"><input type="date" value={windowEnd} onChange={(event) => changeFactorDate('end', event.target.value)} /></Field></div>
-              <button className="primary compute-button" disabled={busy || factorJob?.status === 'RUNNING' || !windowStart || !windowEnd || windowEnd < windowStart} onClick={calculateSelectedFactor}>{factorJob?.status === 'RUNNING' ? '正在计算因子值…' : selectedFactor.calculated ? '按此日期重新计算并替换当前版本' : '计算并发布这个因子'}</button>
-              {factorJob && <div className={`compute-status ${factorJob.status.toLowerCase()}`}><div><b>{factorJob.status === 'RUNNING' ? factorJob.phase : factorJob.status === 'PASS' ? '计算完成' : factorJob.status === 'FAIL' ? '计算失败' : '已停止'}</b><strong>{factorJob.progress}%</strong></div><i><span style={{ width: `${factorJob.progress}%` }} /></i><small>{factorJob.log_tail ? factorJob.log_tail.split('\n').filter(Boolean).slice(-1)[0] : '任务已提交，完成后会自动切换到 M4。'}</small></div>}
+              <div className="compute-dates"><Field label="计算开始"><input type="date" disabled={factorSubmitting || factorJob?.status === 'RUNNING'} value={windowStart} onChange={(event) => changeFactorDate('start', event.target.value)} /></Field><Field label="计算结束"><input type="date" disabled={factorSubmitting || factorJob?.status === 'RUNNING'} value={windowEnd} onChange={(event) => changeFactorDate('end', event.target.value)} /></Field></div>
+              <button className="primary compute-button" disabled={factorSubmitting || factorJob?.status === 'RUNNING' || !windowStart || !windowEnd || windowEnd < windowStart} onClick={calculateSelectedFactor}>{factorSubmitting ? '正在提交任务…' : factorJob?.status === 'RUNNING' ? '因子正在计算中…' : selectedFactor.calculated ? '按此日期重新计算并替换当前版本' : '计算并发布这个因子'}</button>
+              {factorSubmitting && !factorJob && <div className="compute-status running"><div><b>正在提交任务</b><strong>请稍候</strong></div><i><span className="indeterminate" /></i><small>正在连接计算后端，成功后会立即显示任务编号和进度。</small></div>}
+              {factorJob && <div className={`compute-status ${factorJob.accuracy_status === 'FAIL' ? 'fail' : factorJob.status.toLowerCase()}`}>
+                <div><b>{factorJob.status === 'RUNNING' || factorJob.accuracy_status === 'PENDING' || factorJob.accuracy_status === 'FAIL' ? factorJob.phase : factorJob.status === 'PASS' ? '计算完成' : factorJob.status === 'FAIL' ? '计算失败' : '已停止'}</b><strong>{factorJob.progress}%</strong></div>
+                <i><span style={{ width: `${factorJob.progress}%` }} /></i>
+                <p>{factorJob.message}</p>
+                <footer><code>{factorJob.job_id}</code><span>已运行 {formatDuration(factorJob.elapsed_seconds)}</span>{factorJob.status === 'RUNNING' && <button onClick={stopFactorCalculation}>停止计算</button>}</footer>
+              </div>}
             </div>}
             {release && <div className="release-summary">
               <div className="release-factor-name"><strong>{releaseFactorNames(release)}</strong><span>本次历史版本包含的因子</span></div><div><strong>{release.instrument_count.toLocaleString()}</strong><span>股票</span></div><div><strong>{release.session_count.toLocaleString()}</strong><span>交易日</span></div>
               <button onClick={() => setFactorOpen((value) => !value)}>{factorOpen ? '收起名单' : '查看因子名单'} <b>{factorOpen ? '−' : '+'}</b></button>
             </div>}
             {factorOpen && release && <div className="factor-list">{release.factors.map((item) => <span key={`${item.factor_id}-${item.factor_version}`}>{item.chinese_name || item.factor_id}<small>{item.factor_id} · v{item.factor_version}</small></span>)}</div>}
-            <details className="history-release"><summary>历史批次复现入口（包括原来的 13 因子）</summary><select value={releaseId} onChange={(event) => { setSelectedFactor(null); selectRelease(event.target.value) }}><option value="">请选择历史版本</option>{options?.factor_releases.map((item) => <option key={item.release_id} value={item.release_id}>{releaseFactorNames(item)} · {item.start} → {item.end} · {compactId(item.release_id)}</option>)}</select></details>
+            <details className="history-release"><summary>历史批次复现入口</summary><select value={releaseId} onChange={(event) => { setSelectedFactor(null); selectRelease(event.target.value) }}><option value="">请选择历史版本</option>{options?.factor_releases.map((item) => <option key={item.release_id} value={item.release_id}>{releaseFactorNames(item)} · {item.start} → {item.end} · {compactId(item.release_id)}</option>)}</select></details>
           </section>
 
           <section className="panel">

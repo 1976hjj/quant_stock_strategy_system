@@ -58,6 +58,7 @@ export const api = {
   },
   startFactorCalculation: (payload: FactorComputePayload) =>
     request<FactorJobStatus>('/factors/jobs', { method: 'POST', body: JSON.stringify(payload) }),
+  latestFactorCalculation: () => request<{ job: FactorJobStatus | null }>('/factors/jobs/latest'),
   factorCalculationStatus: (jobId: string) => request<FactorJobStatus>(`/factors/jobs/${jobId}`),
   stopFactorCalculation: (jobId: string) =>
     request<FactorJobStatus>(`/factors/jobs/${jobId}/stop`, { method: 'POST', body: '{}' }),
