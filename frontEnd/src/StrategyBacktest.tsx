@@ -208,7 +208,7 @@ export default function StrategyBacktest() {
   }
 
   const result = job?.result
-  const summaryRequest = job?.request ?? payload
+  const summaryRequest = job?.request && 'score_rules' in job.request ? job.request : payload
   return <div className="strategy-page">
     <div className="strategy-heading"><div><span>STRATEGY BACKTEST</span><h1>通用策略回测</h1><p>从已发布因子出发，配置过滤、综合打分、持仓和交易规则，生成连续账户结果。</p></div><b className={online ? 'online' : ''}><i />{online ? '独立回测后端已连接' : '回测后端未连接'}</b></div>
     {error && <div className="strategy-error"><b>没有继续执行</b><span>{error}</span><button onClick={() => setError('')}>×</button></div>}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from './api'
 import FactorAssetLibrary from './FactorAssetLibrary'
 import FactorLibrary from './FactorLibrary'
+import RotationBacktest from './RotationBacktest'
 import StrategyBacktest, { STRATEGY_JOB_EVENT, STRATEGY_JOB_STORAGE_KEY } from './StrategyBacktest'
 import StrategyBacktestHistory from './StrategyBacktestHistory'
 import { strategyApi } from './strategyApi'
@@ -40,13 +41,13 @@ const PIPELINE_NAMES: Record<string, string> = {
 }
 
 const DEFAULT_STAGES: UiStageId[] = ['m4_1', 'm4_2', 'm4_3', 'm4_4', 'm4_5']
-type View = 'CALCULATE' | 'ASSETS' | 'STRATEGY' | 'STRATEGY_HISTORY'
+type View = 'CALCULATE' | 'ASSETS' | 'STRATEGY' | 'ROTATION' | 'STRATEGY_HISTORY'
 const VIEW_STORAGE_KEY = 'alpha-research.current-view'
 const FACTOR_JOB_STORAGE_KEY = 'alpha-research.factor-job-id'
 
 function savedView(): View {
   const value = window.localStorage.getItem(VIEW_STORAGE_KEY)
-  return value === 'ASSETS' || value === 'STRATEGY' || value === 'STRATEGY_HISTORY' ? value : 'CALCULATE'
+  return value === 'ASSETS' || value === 'STRATEGY' || value === 'ROTATION' || value === 'STRATEGY_HISTORY' ? value : 'CALCULATE'
 }
 
 function compactId(value: string) {
@@ -405,13 +406,13 @@ export default function App() {
     <main>
       <header className="topbar">
         <div className="brand"><span className="brand-mark">M4</span><div><b>因子研究台</b><small>FACTOR EVIDENCE WORKBENCH</small></div></div>
-        <nav className="main-nav"><button className={view === 'CALCULATE' ? 'active' : ''} onClick={() => setView('CALCULATE')}>因子计算</button><button className={view === 'ASSETS' ? 'active' : ''} onClick={() => setView('ASSETS')}>因子资产库</button><button className={view === 'STRATEGY' ? 'active' : ''} onClick={() => setView('STRATEGY')}>策略回测{strategyRunning && <i className="nav-running-dot" />}</button><button className={view === 'STRATEGY_HISTORY' ? 'active' : ''} onClick={() => setView('STRATEGY_HISTORY')}>历史回测结果</button></nav>
+        <nav className="main-nav"><button className={view === 'CALCULATE' ? 'active' : ''} onClick={() => setView('CALCULATE')}>因子计算</button><button className={view === 'ASSETS' ? 'active' : ''} onClick={() => setView('ASSETS')}>因子资产库</button><button className={view === 'STRATEGY' ? 'active' : ''} onClick={() => setView('STRATEGY')}>因子策略{strategyRunning && <i className="nav-running-dot" />}</button><button className={view === 'ROTATION' ? 'active' : ''} onClick={() => setView('ROTATION')}>轮动回测{strategyRunning && <i className="nav-running-dot" />}</button><button className={view === 'STRATEGY_HISTORY' ? 'active' : ''} onClick={() => setView('STRATEGY_HISTORY')}>历史回测结果</button></nav>
         <div className={`api-state ${apiOnline ? 'online' : ''}`}><i />{apiOnline ? '计算后端已连接' : '计算后端未连接'}</div>
       </header>
 
       {error && <div className="error-banner"><b>没有继续执行</b><span>{error}</span><button onClick={() => setError('')}>×</button></div>}
 
-      {view === 'STRATEGY' ? <StrategyBacktest /> : view === 'STRATEGY_HISTORY' ? <StrategyBacktestHistory onOpenRunning={() => setView('STRATEGY')} /> : view === 'CALCULATE' ? <>
+      {view === 'STRATEGY' ? <StrategyBacktest /> : view === 'ROTATION' ? <RotationBacktest onOpenFactorCalculate={() => setView('CALCULATE')} onOpenHistory={() => setView('STRATEGY_HISTORY')} /> : view === 'STRATEGY_HISTORY' ? <StrategyBacktestHistory onOpenRunning={(strategyType) => setView(strategyType === 'ROTATION' ? 'ROTATION' : 'STRATEGY')} /> : view === 'CALCULATE' ? <>
       <FactorLibrary selected={selectedFactor} onSelect={chooseFactor} refreshKey={catalogRefresh} />
 
       <div className="workspace">

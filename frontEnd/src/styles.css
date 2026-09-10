@@ -605,7 +605,7 @@ select:focus, input:focus { border-color: #4b946f; box-shadow: 0 0 0 3px rgba(20
 .history-trade-note, .history-trade-error { margin: 11px 0 0; color: #7b8680; font-size: 8px; }
 .history-trade-error { color: #9a5945; }
 .history-trade-table { overflow-x: auto; border: 1px solid #e1e6e1; border-radius: 8px; }
-.history-trade-head, .history-trade-row { min-width: 1370px; display: grid; grid-template-columns: 126px minmax(145px, 1.25fr) 54px 90px 86px 110px 150px 135px 100px 110px 110px; gap: 12px; align-items: center; }
+.history-trade-head, .history-trade-row { min-width: 1390px; display: grid; grid-template-columns: 126px minmax(145px, 1.25fr) 54px 90px 86px 110px 150px 135px 190px 205px; gap: 12px; align-items: center; }
 .history-trade-head { min-height: 30px; padding: 0 10px; background: #f0f3ed; color: #7a857e; font-size: 8px; }
 .history-trade-row { min-height: 39px; padding: 5px 10px; border-top: 1px solid #edf0ec; color: #455249; font-size: 8px; }
 .history-trade-row small { display: block; margin-top: 3px; color: #8a948e; font: 7px 'DM Mono'; }
@@ -617,8 +617,9 @@ select:focus, input:focus { border-color: #4b946f; box-shadow: 0 0 0 3px rgba(20
 .history-trade-row .trade-profit, .history-trade-row .trade-loss { display: grid; justify-items: end; gap: 2px; }
 .history-trade-row .trade-profit small, .history-trade-row .trade-loss small { margin: 0; color: inherit; }
 .history-trade-row .trade-na { color: #a2aaa5; text-align: right; }
-.history-trade-row .trade-weight { text-align: right; color: #243d32; }
-.history-trade-row .trade-weight small { display: block; margin-top: 2px; color: #87938c; font-weight: 500; white-space: nowrap; }
+.history-trade-row .trade-position { text-align: right; color: #243d32; }
+.history-trade-row .trade-position small { display: block; margin-top: 2px; color: #87938c; font-weight: 500; white-space: nowrap; }
+.history-trade-row .trade-portfolio { color: #0b6c5a; }
 .history-trade-row strong { justify-self: start; padding: 3px 5px; border-radius: 99px; font-size: 8px; }
 .history-trade-row strong.buy { color: #16764d; background: #e0f2e7; }
 .history-trade-row strong.sell { color: #a1533f; background: #f9e6df; }
@@ -656,4 +657,44 @@ select:focus, input:focus { border-color: #4b946f; box-shadow: 0 0 0 3px rgba(20
   .history-table { overflow-x: auto; }
   .history-table-head, .history-main-row { min-width: 780px; }
   .history-detail { min-width: 620px; }
+}
+
+.rotation-catalog-note { display: flex; align-items: center; gap: 14px; margin: 0 0 16px; padding: 12px 15px; border: 1px solid #d9e1d8; border-radius: 12px; background: #f4f7f1; color: #536159; font-size: 10px; }
+.rotation-catalog-note b { color: #173326; font-size: 11px; }
+.rotation-catalog-note button { margin-left: auto; padding: 7px 11px; border: 1px solid #83aa91; border-radius: 7px; background: #fff; color: #176a48; cursor: pointer; }
+.rotation-candidate header { align-items: center; }
+.candidate-delete { margin-left: auto; border: 0; background: transparent; color: #bb5a42; font-size: 9px; cursor: pointer; }
+.rotation-rule-title { margin: 18px 0 8px; color: #536159; font-size: 10px; }
+.add-candidate { width: 100%; min-height: 42px; margin-bottom: 12px; border: 1px dashed #89a996; border-radius: 12px; background: #f6f8f4; color: #176a48; font-weight: 650; cursor: pointer; }
+.add-candidate:disabled { opacity: .45; cursor: not-allowed; }
+.cost-note { margin: 12px 0 0; color: #718078; font-size: 9px; }
+.rotation-job { display: grid; gap: 5px; margin-top: 10px; padding: 10px; border: 1px solid #345143; border-radius: 9px; color: #cbd8d0; font-size: 9px; }
+.rotation-job b { color: #c2eb7d; }
+.rotation-job button { min-height: 30px; border: 1px solid #547362; border-radius: 7px; background: transparent; color: #fff; cursor: pointer; }
+.rotation-preview { margin-top: 16px; }
+.rotation-preview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.rotation-preview-grid article { padding: 13px; border: 1px solid #dde3dc; border-radius: 11px; background: #f6f8f4; }
+.rotation-preview-grid h3 { display: flex; justify-content: space-between; gap: 10px; margin: 0 0 9px; font-size: 11px; }
+.rotation-preview-grid h3 small { color: #758079; font-size: 8px; font-weight: 400; }
+.rotation-preview-grid article > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.rotation-preview-grid article span { display: grid; gap: 2px; padding: 7px 8px; border-radius: 7px; background: #fff; font-size: 8px; }
+.rotation-preview-grid article span small { color: #7c8780; font: 7px 'DM Mono'; }
+.rotation-overlaps { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 11px; }
+.rotation-overlaps span { padding: 6px 9px; border-radius: 99px; background: #e9f2e7; color: #285c43; font-size: 8px; }
+.rotation-history-chart { grid-column: 1 / -1; }
+.rotation-chart-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; color: #5e6b64; font-size: 8px; }
+.rotation-chart-legend span { display: flex; align-items: center; gap: 5px; }
+.rotation-chart-legend i { width: 15px; height: 2px; }
+.rotation-history-chart svg { width: 100%; height: 205px; overflow: visible; }
+.rotation-history-chart svg line { stroke: #d5ddd6; stroke-width: 1; }
+.rotation-history-chart svg polyline { fill: none; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.rotation-switch-list { display: flex; gap: 6px; overflow-x: auto; margin-top: 8px; padding-bottom: 4px; }
+.rotation-switch-list span { flex: 0 0 auto; display: grid; gap: 2px; padding: 7px 9px; border-radius: 7px; background: #f0f4ed; color: #46554c; font-size: 8px; }
+.rotation-switch-list small { color: #7d8781; }
+
+@media (max-width: 680px) {
+  .rotation-catalog-note { align-items: flex-start; flex-direction: column; }
+  .rotation-catalog-note button { margin-left: 0; }
+  .rotation-preview-grid { grid-template-columns: 1fr; }
+  .rotation-preview-grid article > div { grid-template-columns: 1fr; }
 }

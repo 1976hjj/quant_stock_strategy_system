@@ -11,6 +11,134 @@ export interface StrategyFactorOption {
   end: string
 }
 
+export interface RotationFactorOption extends Omit<StrategyFactorOption, 'release_id' | 'start' | 'end'> {
+  factor_version: string
+  release_id: string | null
+  calculated: boolean
+  status: string
+  status_label: string
+  start: string | null
+  end: string | null
+}
+
+export interface RotationCandidate {
+  candidate_id: string
+  name: string
+  kind: 'FACTOR'
+  score_rules: ScoreRule[]
+  filter_rules: FilterRule[]
+  exclude_st: boolean
+  minimum_listed_sessions: number
+  target_count: number
+  retention_rank: number
+  rebalance_sessions: number
+  industry_control: 'NONE' | 'CAP'
+  maximum_industry_weight: number
+  missing_industry_policy: 'UNKNOWN_BUCKET' | 'EXCLUDE'
+}
+
+export interface RotationRequest {
+  schema_version: '1'
+  strategy_type: 'ROTATION'
+  name: string
+  start: string
+  end: string
+  universe_id: 'ALL-A-PIT'
+  candidates: RotationCandidate[]
+  signal: {
+    metric: 'TRAILING_RETURN' | 'EXCESS_RETURN' | 'RISK_ADJUSTED_RETURN'
+    lookback_sessions: number
+    decision_interval_sessions: number
+    switch_threshold: number
+    confirmation_periods: number
+    minimum_hold_periods: number
+  }
+  allocation: {
+    mode: 'WINNER_TAKE_ALL' | 'WINNER_TILT' | 'SCORE_WEIGHTED'
+    winner_weight: number
+    minimum_cash_fraction: number
+  }
+  initial_cash_cny: number
+  buy_commission_bps: number
+  sell_commission_bps: number
+  sell_stamp_duty_bps: number
+  historical_sell_stamp_duty_bps: number
+  minimum_commission_cny: number
+  transfer_fee_bps: number
+  historical_transfer_fee_bps: number
+  base_slippage_bps: number
+  square_root_impact_bps: number
+  maximum_slippage_bps: number
+  maximum_participation_rate: number
+}
+
+export interface RotationOptions {
+  factors: RotationFactorOption[]
+  factor_counts: { total: number; calculated: number; needs_calculation: number }
+  candidate_kinds: Array<{ id: string; name: string }>
+  signal_metrics: Array<{ id: RotationRequest['signal']['metric']; name: string }>
+  allocation_modes: Array<{ id: RotationRequest['allocation']['mode']; name: string }>
+  industry_controls: Array<{ id: RotationCandidate['industry_control']; name: string }>
+  limits: { minimum_candidates: number; maximum_candidates: number }
+  rotation_defaults: Record<string, number | string>
+}
+
+export interface RotationPreflight {
+  status: 'READY'
+  config_id: string
+  strategy_type: 'ROTATION'
+  session_count: number
+  estimated_decisions: number
+  candidate_count: number
+  release_count: number
+  candidates: Array<{
+    candidate_id: string
+    name: string
+    factor_count: number
+    config_id: string
+    common_range: { start: string; end: string }
+  }>
+  industry: {
+    as_of: string
+    universe_count: number
+    mapped_count: number
+    missing_count: number
+    overlap_resolved_count: number
+    pit_rule: string
+  }
+  warnings: string[]
+}
+
+export interface RotationPreview {
+  status: 'READY'
+  signal_date: string
+  execution_session: 'NEXT_ELIGIBLE_OPEN'
+  candidates: Array<{
+    candidate_id: string
+    name: string
+    base_count: number
+    after_filters: number
+    score_ready: number
+    industry_limit_excluded: number
+    industry_missing_count: number
+    industry_counts: Record<string, number>
+    holdings: Array<{
+      rank: number
+      ts_code: string
+      security_name: string
+      score: number
+      industry_code: string | null
+      factor_values: Record<string, number>
+    }>
+  }>
+  overlaps: Array<{
+    left_candidate_id: string
+    right_candidate_id: string
+    shared_count: number
+    jaccard: number
+  }>
+}
+
 export interface ScoreRule {
   factor_id: string
   release_id: string
@@ -140,6 +268,25 @@ export interface StrategyResult {
     recovered: boolean
   } | null
   latest_holdings: string[]
+  rotation?: {
+    decision_count: number
+    switch_count: number
+    decisions: Array<{
+      signal_session: string
+      execution_session: string
+      leader: string | null
+      active_candidate_id: string | null
+      switched: boolean
+      reason: string
+      target_stock_count: number
+    }>
+    candidate_shadows: Array<{
+      candidate_id: string
+      name: string
+      summary: StrategyResult['summary']
+      daily: StrategyResult['daily']
+    }>
+  }
 }
 
 export interface StrategyTrade {
@@ -205,7 +352,8 @@ export interface StrategyJob {
   result: StrategyResult | null
   created_at?: string
   updated_at?: string
-  request?: StrategyRequest
+  request?: StrategyRequest | RotationRequest
+  strategy_type?: 'FACTOR' | 'ROTATION'
   process_alive?: boolean
   elapsed_seconds?: number
   heartbeat_at?: string | null
@@ -248,4 +396,11 @@ export const strategyApi = {
   delete: (jobId: string) => request<{ job_id: string; deleted: boolean }>(`/strategy/jobs/${jobId}`, { method: 'DELETE' }),
   trades: (jobId: string, year: number, offset = 0) => request<StrategyYearTrades>(`/strategy/jobs/${jobId}/trades?year=${year}&offset=${offset}`),
   reportUrl: (jobId: string) => `${STRATEGY_API_ROOT}/strategy/jobs/${jobId}/report`,
+}
+
+export const rotationApi = {
+  options: () => request<RotationOptions>('/rotation/options'),
+  preflight: (payload: RotationRequest) => request<RotationPreflight>('/rotation/preflight', { method: 'POST', body: JSON.stringify(payload) }),
+  preview: (payload: RotationRequest, previewDate: string) => request<RotationPreview>('/rotation/preview', { method: 'POST', body: JSON.stringify({ ...payload, preview_date: previewDate }) }),
+  start: (payload: RotationRequest) => request<StrategyJob>('/rotation/jobs', { method: 'POST', body: JSON.stringify(payload) }),
 }
