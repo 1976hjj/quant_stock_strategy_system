@@ -423,6 +423,20 @@ select:focus, input:focus { border-color: #4b946f; box-shadow: 0 0 0 3px rgba(20
 .rule-row label input { padding-right: 45px; }
 .rule-row > button { height: 36px; border: 1px solid #e0c8be; border-radius: 8px; background: #fff7f3; color: #9a5945; cursor: pointer; font-size: 10px; }
 .add-rule { justify-self: start; padding: 7px 10px; border: 1px dashed #9db9a8; border-radius: 8px; background: #f1f6f1; color: var(--green); font-size: 10px; cursor: pointer; }
+.risk-config { border-color: #cddbcf; background: linear-gradient(145deg, rgba(251,250,246,.98), rgba(242,247,240,.98)); }
+.risk-subtitle { margin: 4px 0 -2px; color: #52655a; font-size: 10px; }
+.risk-level-table { overflow: hidden; border: 1px solid #d7dfd7; border-radius: 9px; background: #fff; }
+.risk-level-head, .risk-level-row { display: grid; grid-template-columns: 64px repeat(4, minmax(90px, 1fr)); gap: 8px; align-items: center; padding: 7px 10px; }
+.risk-level-head { background: #eaf1e8; color: #69776f; font-size: 8px; }
+.risk-level-row { min-height: 39px; border-top: 1px solid #edf0ec; color: #405047; font-size: 9px; }
+.risk-level-row > b { color: #176a48; font: 700 9px 'DM Mono'; }
+.risk-level-row input { width: 100%; height: 30px; padding: 0 8px; box-sizing: border-box; border: 1px solid #d8ded8; border-radius: 7px; background: #fbfcfa; color: var(--ink); font: 9px 'DM Mono'; }
+.risk-level-row > span { color: #263c30; font: 650 10px 'DM Mono'; }
+.risk-advanced { border-top: 1px solid #dde5dc; padding-top: 9px; }
+.risk-advanced summary { color: #176a48; font-size: 9px; font-weight: 650; cursor: pointer; }
+.risk-advanced[open] summary { margin-bottom: 11px; }
+.risk-warning { margin: 0; padding: 9px 11px; border-left: 3px solid #c47958; background: #fff3ed; color: #8c4f37; font-size: 9px; line-height: 1.5; }
+.risk-note { margin: -2px 0 2px; padding: 8px 10px; border-left: 3px solid #6f987d; background: #edf5ed; color: #587064; font-size: 9px; line-height: 1.5; }
 .strategy-console { position: sticky; top: 74px; width: 100%; height: fit-content; max-height: calc(100vh - 94px); overflow-y: auto; overscroll-behavior: contain; box-sizing: border-box; z-index: 10; padding: 18px; border-radius: 16px; background: #13231b; color: #f5f8f5; box-shadow: 0 16px 42px rgba(20,35,28,.14); }
 .strategy-console > span { color: #b9e978; font: 700 8px 'DM Mono'; letter-spacing: .13em; }
 .strategy-console h2 { margin: 8px 0 15px; font-size: 18px; }
@@ -477,6 +491,28 @@ select:focus, input:focus { border-color: #4b946f; box-shadow: 0 0 0 3px rgba(20
 .preview-stats > div, .annual-results > div { min-width: 110px; padding: 9px; display: grid; gap: 4px; border-radius: 8px; background: #eef3ed; }
 .preview-stats span, .preview-stats small, .annual-results span { color: #7a867f; font-size: 8px; }
 .preview-stats b, .annual-results b { font: 600 10px 'DM Mono'; }
+.risk-result { margin-top: 12px; padding: 13px; border: 1px solid #d9e2d8; border-radius: 10px; background: #f7faf5; }
+.risk-result h3 { margin: 0 0 10px; color: #315842; font-size: 11px; }
+.selection-sequence-proof { margin-bottom: 9px; padding: 9px; display: grid; grid-template-columns: auto minmax(160px,1fr) auto minmax(120px,.6fr); gap: 5px 9px; align-items: center; border: 1px solid #dce5da; border-radius: 8px; background: #fff; font-size: 8px; }
+.selection-sequence-proof span { color: #7a867f; }
+.selection-sequence-proof b { color: #294234; font-size: 9px; }
+.selection-sequence-proof code { color: #176a48; font: 650 8px 'DM Mono'; }
+.selection-sequence-proof small { grid-column: 1 / -1; color: #87928b; }
+.risk-result-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+.risk-result-metrics > div { padding: 9px; display: grid; gap: 4px; border-radius: 8px; background: #fff; }
+.risk-result-metrics span { color: #7a867f; font-size: 8px; }
+.risk-result-metrics b { overflow: hidden; color: #263a2f; font: 650 10px 'DM Mono'; text-overflow: ellipsis; white-space: nowrap; }
+.risk-result details { margin-top: 10px; }
+.risk-result summary { color: #176a48; font-size: 9px; cursor: pointer; }
+.risk-change-table { max-height: 360px; margin-top: 8px; overflow: auto; border: 1px solid #dfe5de; border-radius: 8px; background: #fff; }
+.risk-change-table > div { min-width: 650px; display: grid; grid-template-columns: 110px 110px 90px 90px 90px 90px; gap: 8px; align-items: center; min-height: 31px; padding: 0 9px; border-top: 1px solid #edf0ec; color: #4b5850; font: 8px 'DM Mono'; }
+.risk-change-table > div:first-child { position: sticky; top: 0; border-top: 0; background: #eaf1e8; color: #66746c; }
+.kelly-change-table { max-height: 420px; margin-top: 8px; overflow: auto; border: 1px solid #dfe5de; border-radius: 8px; background: #fff; }
+.kelly-change-table > div { min-width: 940px; display: grid; grid-template-columns: 100px 100px 70px repeat(6, 92px); gap: 8px; align-items: center; min-height: 31px; padding: 0 9px; border-top: 1px solid #edf0ec; color: #4b5850; font: 8px 'DM Mono'; }
+.kelly-change-table > div:first-child { position: sticky; top: 0; border-top: 0; background: #eaf1e8; color: #66746c; }
+.risk-quarter-table { max-height: 360px; margin-top: 8px; overflow: auto; border: 1px solid #dfe5de; border-radius: 8px; background: #fff; }
+.risk-quarter-table > div { min-width: 540px; display: grid; grid-template-columns: 90px repeat(4, minmax(100px, 1fr)); gap: 8px; align-items: center; min-height: 31px; padding: 0 9px; border-top: 1px solid #edf0ec; color: #4b5850; font: 8px 'DM Mono'; }
+.risk-quarter-table > div:first-child { position: sticky; top: 0; border-top: 0; background: #eaf1e8; color: #66746c; }
 .holding-table { max-height: 390px; overflow: auto; border: 1px solid #e0e4df; border-radius: 9px; }
 .holding-table > div { display: grid; grid-template-columns: 55px 1.5fr 1fr 1fr; padding: 8px 10px; border-bottom: 1px solid #ebedea; font-size: 8px; }
 .holding-table > div:first-child { position: sticky; top: 0; background: #eef3ed; }
@@ -510,6 +546,9 @@ select:focus, input:focus { border-color: #4b946f; box-shadow: 0 0 0 3px rgba(20
   .result-metrics > div { border-top: 1px solid #e8ece7; }
   .result-metrics > div:first-child, .result-metrics > div:nth-child(2) { border-top: 0; }
   .result-metrics > div:nth-child(odd) { border-left: 0; }
+  .risk-result-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .risk-level-table { overflow-x: auto; }
+  .risk-level-head, .risk-level-row { min-width: 560px; }
 }
 
 .nav-running-dot { position: absolute; top: 18px; right: -5px; width: 7px; height: 7px; border-radius: 50%; background: #42b97a; box-shadow: 0 0 0 3px rgba(66,185,122,.14); animation: pulse 1.2s infinite; }

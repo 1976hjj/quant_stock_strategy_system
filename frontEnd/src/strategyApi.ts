@@ -155,14 +155,57 @@ export interface FilterRule {
   missing_policy: 'EXCLUDE' | 'KEEP'
 }
 
+export type RiskExperimentVariant = 'R0' | 'R1' | 'R2' | 'R3' | 'R4' | 'R5' | 'R6' | 'R7' | 'R8'
+export type RiskLevelId = 'M0' | 'M1' | 'M2' | 'M3' | 'M4' | 'M5' | 'M6'
+
+export interface RiskLevel {
+  level_id: RiskLevelId
+  score_min: number
+  score_max: number
+  exposure: number
+}
+
+export interface RiskOverlaySpec {
+  experiment_variant: RiskExperimentVariant
+  market_scope: 'ALL_A_EQUAL_WEIGHT_PIT'
+  weights: { breadth: number; trend: number; volatility: number; liquidity: number; stress_tail: number }
+  levels: RiskLevel[]
+  percentile_window_sessions: number
+  percentile_min_sessions: number
+  breadth_return_sessions: number
+  trend_sessions: number
+  volatility_sessions: number
+  liquidity_sessions: number
+  stress_smoothing_sessions: number
+  tail_loss_threshold: number
+  r3_interval_sessions: number
+  down_confirmation_sessions: number
+  up_confirmation_sessions: number
+  hysteresis_score: number
+  train_lookback_sessions: number
+  fixed_exposure: number
+  kelly_lookback_sessions: number
+  kelly_min_sessions: number
+  kelly_update_sessions: number
+  kelly_fraction: number
+  kelly_initial_exposure: number
+  kelly_min_exposure: number
+  kelly_max_exposure: number
+  kelly_drawdown_limit: number
+  kelly_exposure_step: number
+  cash_annual_yield: number
+}
+
 export interface StrategyRequest {
   name: string
   start: string
   end: string
   universe_id: 'ALL-A-PIT'
+  selection_sequence_mode: 'ACTUAL_POSITIONS' | 'MODEL_TARGETS'
   score_rules: ScoreRule[]
   filter_rules: FilterRule[]
   exclude_st: boolean
+  exclude_abnormal_status: boolean
   minimum_listed_sessions: number
   target_count: number
   retention_rank: number
@@ -180,12 +223,14 @@ export interface StrategyRequest {
   square_root_impact_bps: number
   maximum_slippage_bps: number
   maximum_participation_rate: number
+  risk_overlay: RiskOverlaySpec
 }
 
 export interface StrategyOptions {
   factors: StrategyFactorOption[]
   universes: Array<{ id: string; name: string }>
   defaults: Record<string, number>
+  risk_overlay_defaults?: RiskOverlaySpec
 }
 
 export interface StrategyPreflight {
@@ -196,6 +241,12 @@ export interface StrategyPreflight {
   factor_count: number
   estimated_rebalances: number
   warnings: string[]
+  risk_overlay?: {
+    experiment_variant: RiskExperimentVariant
+    market_scope: string
+    execution: string
+    data_check: { initial_exposure: number; scheduled_changes: number | null; calculation?: string } | null
+  }
 }
 
 export interface StrategyPreview {
@@ -245,7 +296,19 @@ export interface StrategyResult {
     position_basis: string
     cost_basis_method: string
   }
-  daily: Array<{ session: string; nav: number; cash: number; positions: number; daily_return: number; turnover: number; cost: number }>
+  daily: Array<{ session: string; nav: number; cash: number; positions: number; daily_return: number; turnover: number; cost: number; target_risk_exposure?: number; actual_stock_exposure?: number; cash_interest?: number }>
+  risk_overlay?: {
+    experiment_variant: RiskExperimentVariant
+    market_scope: string
+    initial_exposure: number
+    average_target_exposure: number
+    average_actual_stock_exposure: number
+    exposure_change_count: number
+    sample_classification: string
+    changes: Array<{ signal_session: string; execution_session: string | null; risk_score: number | null; from_exposure: number; to_exposure: number; to_level: RiskLevelId | null; observations?: number; annualized_mean_return?: number; annualized_volatility?: number; historical_maximum_drawdown?: number; raw_kelly?: number; fractional_kelly?: number; drawdown_cap?: number }>
+    quarterly: Array<{ period: string; start_session: string; end_session: string; return: number; maximum_drawdown: number; average_target_exposure: number; average_actual_stock_exposure: number }>
+    kelly_source?: { experiment_variant: 'R0'; run_id: string; selection_fingerprint: string; return_basis: string; timing: string }
+  }
   benchmark?: {
     benchmark_id: string
     name: string
@@ -268,6 +331,12 @@ export interface StrategyResult {
     recovered: boolean
   } | null
   latest_holdings: string[]
+  selection_sequence?: {
+    mode: 'ACTUAL_POSITIONS' | 'MODEL_TARGETS'
+    fingerprint: string
+    selection_count: number
+    basis: string
+  }
   rotation?: {
     decision_count: number
     switch_count: number
