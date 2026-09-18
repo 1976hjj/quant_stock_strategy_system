@@ -141,7 +141,7 @@ function Detail({ job }: { job: StrategyJob }) {
       {factorRequest && <div><dt>调仓间隔</dt><dd>{factorRequest.rebalance_sessions} 个交易日</dd></div>}
       {factorRequest && <div><dt>选股序列口径</dt><dd>{factorRequest.selection_sequence_mode === 'MODEL_TARGETS' ? '模型目标序列（实验共用）' : '实际持仓序列（原逻辑）'}</dd></div>}
       {factorRequest && <div><dt>PIT 异常状态退出</dt><dd>{factorRequest.exclude_abnormal_status === false ? '关闭' : '开启'}</dd></div>}
-      {factorRequest?.risk_overlay && <div><dt>风险仓位实验</dt><dd>{factorRequest.risk_overlay.experiment_variant}</dd></div>}
+      {factorRequest && <div><dt>环境仓位方案</dt><dd>{factorRequest.shadow_health?.experiment_variant || 'S0'}</dd></div>}
       {rotationRequest && <div><dt>候选组合</dt><dd>{rotationRequest.candidates.length} 个</dd></div>}
       {rotationRequest && <div><dt>轮动规则</dt><dd>{rotationRequest.signal.lookback_sessions}日回看 · 阈值 {percent(rotationRequest.signal.switch_threshold)}</dd></div>}
       <div><dt>初始资金</dt><dd>¥{number(request?.initial_cash_cny, 0)}</dd></div>
@@ -149,15 +149,15 @@ function Detail({ job }: { job: StrategyJob }) {
     </dl></section>
     {factorRequest && <section><h3>评分因子</h3><div className="detail-rules">{factorRequest.score_rules.map((rule) => <div key={rule.factor_id}><b>{rule.factor_id}</b><span>{rule.direction === 'HIGH' ? '高值优先' : '低值优先'} · 权重 {number(rule.weight)}%</span></div>)}</div></section>}
     {factorRequest && <section><h3>过滤规则</h3><div className="detail-rules">{factorRequest.filter_rules.length ? factorRequest.filter_rules.map((rule) => <div key={rule.factor_id}><b>{rule.factor_id}</b><span>{rule.mode === 'EXCLUDE_HIGH' ? '排除最高' : '排除最低'} {percent(rule.fraction)} · {rule.missing_policy === 'EXCLUDE' ? '缺失排除' : '缺失保留'}</span></div>) : <span className="detail-none">无过滤规则</span>}</div></section>}
-    {factorRequest?.risk_overlay && <section><h3>Risk Score 仓位规则</h3><dl>
-      <div><dt>实验版本</dt><dd>{factorRequest.risk_overlay.experiment_variant}</dd></div>
-      <div><dt>信号范围</dt><dd>历史时点全 A 等权</dd></div>
-      <div><dt>现金年化</dt><dd>{percent(factorRequest.risk_overlay.cash_annual_yield)}</dd></div>
-      {factorRequest.risk_overlay.experiment_variant === 'R7' && <div><dt>固定风险仓位</dt><dd>{percent(factorRequest.risk_overlay.fixed_exposure)}</dd></div>}
-      {factorRequest.risk_overlay.experiment_variant === 'R8' && <><div><dt>凯利回看 / 最小样本</dt><dd>{factorRequest.risk_overlay.kelly_lookback_sessions} / {factorRequest.risk_overlay.kelly_min_sessions} 个交易日</dd></div><div><dt>凯利更新间隔</dt><dd>{factorRequest.risk_overlay.kelly_update_sessions} 个交易日</dd></div><div><dt>凯利折扣</dt><dd>{percent(factorRequest.risk_overlay.kelly_fraction)}</dd></div><div><dt>风险仓位范围</dt><dd>{percent(factorRequest.risk_overlay.kelly_min_exposure)}—{percent(factorRequest.risk_overlay.kelly_max_exposure)}</dd></div><div><dt>可接受回撤</dt><dd>{percent(factorRequest.risk_overlay.kelly_drawdown_limit)}</dd></div></>}
+    {factorRequest?.shadow_health && <section><h3>市场与影子策略环境仓位</h3><dl>
+      <div><dt>环境仓位方案</dt><dd>{factorRequest.shadow_health.experiment_variant}</dd></div>
+      <div><dt>全A趋势 / 上涨比例回看</dt><dd>MA{factorRequest.shadow_health.external_trend_sessions} / {factorRequest.shadow_health.external_breadth_return_sessions}日</dd></div>
+      <div><dt>强 / 弱环境上涨比例</dt><dd>{percent(factorRequest.shadow_health.external_strong_breadth)} / {percent(factorRequest.shadow_health.external_weak_breadth)}</dd></div>
+      <div><dt>普通 / 严重回撤</dt><dd>{percent(factorRequest.shadow_health.regime_ordinary_drawdown)} / {percent(factorRequest.shadow_health.regime_severe_drawdown)}</dd></div>
+      <div><dt>强 / 基础 / 走弱仓位</dt><dd>{percent(factorRequest.shadow_health.regime_strong_exposure)} / {percent(factorRequest.shadow_health.regime_base_exposure)} / {percent(factorRequest.shadow_health.regime_weak_exposure)}</dd></div>
       <div><dt>执行时序</dt><dd>T 收盘 → T+1 开盘</dd></div>
-      {result?.risk_overlay && <><div><dt>平均目标仓位</dt><dd>{percent(result.risk_overlay.average_target_exposure)}</dd></div><div><dt>平均实际股票仓</dt><dd>{percent(result.risk_overlay.average_actual_stock_exposure)}</dd></div><div><dt>仓位变化</dt><dd>{result.risk_overlay.exposure_change_count} 次</dd></div></>}
-      {result?.selection_sequence && <><div><dt>选股序列指纹</dt><dd title={result.selection_sequence.fingerprint}><code>{result.selection_sequence.fingerprint.slice(7, 23)}</code></dd></div><div><dt>选股调仓</dt><dd>{result.selection_sequence.selection_count} 次</dd></div></>}
+      {result?.shadow_health && <><div><dt>平均影子目标仓位</dt><dd>{percent(result.shadow_health.average_target_exposure)}</dd></div><div><dt>平均实际股票仓</dt><dd>{percent(result.shadow_health.average_actual_stock_exposure)}</dd></div><div><dt>影子仓位变化</dt><dd>{result.shadow_health.exposure_change_count} 次</dd></div></>}
+      {result?.shadow_health?.source && <><div><dt>影子信号来源</dt><dd>{result.shadow_health.source.experiment_variant}</dd></div><div><dt>来源选股序列指纹</dt><dd title={result.shadow_health.source.selection_fingerprint}><code>{result.shadow_health.source.selection_fingerprint.slice(7, 23)}</code></dd></div></>}
     </dl></section>}
     {rotationRequest && <section><h3>候选组合与因子</h3><div className="detail-rules">{rotationRequest.candidates.map((candidate) => <div key={candidate.candidate_id}><b>{candidate.name}</b><span>{candidate.score_rules.map((rule) => `${rule.factor_id}（${rule.direction === 'HIGH' ? '高' : '低'}）`).join(' · ')} · 持股 {candidate.target_count}</span></div>)}</div></section>}
     {result?.rotation && <section><h3>轮动执行</h3><dl><div><dt>判断次数</dt><dd>{result.rotation.decision_count}</dd></div><div><dt>实际切换</dt><dd>{result.rotation.switch_count}</dd></div><div><dt>当前组合</dt><dd>{result.rotation.decisions.at(-1)?.active_candidate_id || '—'}</dd></div></dl></section>}

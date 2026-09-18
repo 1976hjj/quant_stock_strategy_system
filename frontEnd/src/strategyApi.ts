@@ -155,45 +155,22 @@ export interface FilterRule {
   missing_policy: 'EXCLUDE' | 'KEEP'
 }
 
-export type RiskExperimentVariant = 'R0' | 'R1' | 'R2' | 'R3' | 'R4' | 'R5' | 'R6' | 'R7' | 'R8'
-export type RiskLevelId = 'M0' | 'M1' | 'M2' | 'M3' | 'M4' | 'M5' | 'M6'
+export type ShadowHealthVariant = 'S0' | 'S4V3'
 
-export interface RiskLevel {
-  level_id: RiskLevelId
-  score_min: number
-  score_max: number
-  exposure: number
-}
-
-export interface RiskOverlaySpec {
-  experiment_variant: RiskExperimentVariant
-  market_scope: 'ALL_A_EQUAL_WEIGHT_PIT'
-  weights: { breadth: number; trend: number; volatility: number; liquidity: number; stress_tail: number }
-  levels: RiskLevel[]
-  percentile_window_sessions: number
-  percentile_min_sessions: number
-  breadth_return_sessions: number
-  trend_sessions: number
-  volatility_sessions: number
-  liquidity_sessions: number
-  stress_smoothing_sessions: number
-  tail_loss_threshold: number
-  r3_interval_sessions: number
-  down_confirmation_sessions: number
-  up_confirmation_sessions: number
-  hysteresis_score: number
-  train_lookback_sessions: number
-  fixed_exposure: number
-  kelly_lookback_sessions: number
-  kelly_min_sessions: number
-  kelly_update_sessions: number
-  kelly_fraction: number
-  kelly_initial_exposure: number
-  kelly_min_exposure: number
-  kelly_max_exposure: number
-  kelly_drawdown_limit: number
-  kelly_exposure_step: number
-  cash_annual_yield: number
+export interface ShadowHealthSpec {
+  experiment_variant: ShadowHealthVariant
+  drawdown_peak_lookback_sessions: number
+  external_trend_sessions: number
+  external_breadth_return_sessions: number
+  external_strong_breadth: number
+  external_weak_breadth: number
+  regime_ordinary_drawdown: number
+  regime_severe_drawdown: number
+  regime_base_exposure: number
+  regime_weak_exposure: number
+  regime_strong_exposure: number
+  regime_down_confirmation_sessions: number
+  regime_up_confirmation_sessions: number
 }
 
 export interface StrategyRequest {
@@ -223,14 +200,14 @@ export interface StrategyRequest {
   square_root_impact_bps: number
   maximum_slippage_bps: number
   maximum_participation_rate: number
-  risk_overlay: RiskOverlaySpec
+  shadow_health: ShadowHealthSpec
 }
 
 export interface StrategyOptions {
   factors: StrategyFactorOption[]
   universes: Array<{ id: string; name: string }>
   defaults: Record<string, number>
-  risk_overlay_defaults?: RiskOverlaySpec
+  shadow_health_defaults?: ShadowHealthSpec
 }
 
 export interface StrategyPreflight {
@@ -241,11 +218,10 @@ export interface StrategyPreflight {
   factor_count: number
   estimated_rebalances: number
   warnings: string[]
-  risk_overlay?: {
-    experiment_variant: RiskExperimentVariant
-    market_scope: string
+  shadow_health?: {
+    experiment_variant: ShadowHealthVariant
     execution: string
-    data_check: { initial_exposure: number; scheduled_changes: number | null; calculation?: string } | null
+    data_check: { initial_exposure: number | null; scheduled_changes: number | null; calculation: string } | null
   }
 }
 
@@ -296,18 +272,17 @@ export interface StrategyResult {
     position_basis: string
     cost_basis_method: string
   }
-  daily: Array<{ session: string; nav: number; cash: number; positions: number; daily_return: number; turnover: number; cost: number; target_risk_exposure?: number; actual_stock_exposure?: number; cash_interest?: number }>
-  risk_overlay?: {
-    experiment_variant: RiskExperimentVariant
-    market_scope: string
+  daily: Array<{ session: string; nav: number; cash: number; positions: number; daily_return: number; turnover: number; cost: number; target_regime_exposure?: number; target_shadow_exposure?: number; target_combined_exposure?: number; actual_stock_exposure?: number; shadow_position_breadth?: number | null; cash_interest?: number }>
+  shadow_health?: {
+    experiment_variant: ShadowHealthVariant
     initial_exposure: number
     average_target_exposure: number
     average_actual_stock_exposure: number
     exposure_change_count: number
     sample_classification: string
-    changes: Array<{ signal_session: string; execution_session: string | null; risk_score: number | null; from_exposure: number; to_exposure: number; to_level: RiskLevelId | null; observations?: number; annualized_mean_return?: number; annualized_volatility?: number; historical_maximum_drawdown?: number; raw_kelly?: number; fractional_kelly?: number; drawdown_cap?: number }>
-    quarterly: Array<{ period: string; start_session: string; end_session: string; return: number; maximum_drawdown: number; average_target_exposure: number; average_actual_stock_exposure: number }>
-    kelly_source?: { experiment_variant: 'R0'; run_id: string; selection_fingerprint: string; return_basis: string; timing: string }
+    changes: Array<{ signal_session: string; execution_session: string | null; shadow_nav: number; shadow_nav_ma: number | null; shadow_drawdown: number; shadow_breadth: number | null; from_exposure: number; to_exposure: number; external_market_index?: number; external_market_ma?: number; external_trend_gap?: number; external_breadth?: number; from_regime?: string; to_regime?: string; trigger?: string }>
+    signal_scope?: string
+    source?: { experiment_variant: 'S0'; run_id: string; selection_fingerprint: string; managed_selection_fingerprint?: string; selection_sequence_matches?: boolean; average_actual_stock_exposure: number }
   }
   benchmark?: {
     benchmark_id: string
@@ -432,6 +407,10 @@ export interface StrategyJob {
   rebalance_count?: number | null
   position_count?: number | null
   query_progress?: number | null
+  completed_parameter_sets?: number | null
+  total_parameter_sets?: number | null
+  remaining_parameter_sets?: number | null
+  current_parameters?: Partial<ShadowHealthSpec> | null
   trade_detail_available?: boolean
   execution_model_valid?: boolean
 }

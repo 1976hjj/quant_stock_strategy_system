@@ -510,6 +510,11 @@ select:focus, input:focus { border-color: #4b946f; box-shadow: 0 0 0 3px rgba(20
 .kelly-change-table { max-height: 420px; margin-top: 8px; overflow: auto; border: 1px solid #dfe5de; border-radius: 8px; background: #fff; }
 .kelly-change-table > div { min-width: 940px; display: grid; grid-template-columns: 100px 100px 70px repeat(6, 92px); gap: 8px; align-items: center; min-height: 31px; padding: 0 9px; border-top: 1px solid #edf0ec; color: #4b5850; font: 8px 'DM Mono'; }
 .kelly-change-table > div:first-child { position: sticky; top: 0; border-top: 0; background: #eaf1e8; color: #66746c; }
+.shadow-sweep-table { max-height: 430px; margin-top: 8px; overflow: auto; border: 1px solid #dfe5de; border-radius: 8px; background: #fff; }
+.shadow-sweep-table table { width: 100%; min-width: 1120px; border-collapse: collapse; color: #4b5850; font: 8px 'DM Mono'; }
+.shadow-sweep-table th, .shadow-sweep-table td { padding: 9px; border-top: 1px solid #edf0ec; text-align: left; white-space: nowrap; }
+.shadow-sweep-table thead { position: sticky; top: 0; z-index: 1; background: #eaf1e8; color: #66746c; }
+.shadow-sweep-table tbody tr:first-child { background: #fff5f1; color: #9b402d; font-weight: 700; }
 .risk-quarter-table { max-height: 360px; margin-top: 8px; overflow: auto; border: 1px solid #dfe5de; border-radius: 8px; background: #fff; }
 .risk-quarter-table > div { min-width: 540px; display: grid; grid-template-columns: 90px repeat(4, minmax(100px, 1fr)); gap: 8px; align-items: center; min-height: 31px; padding: 0 9px; border-top: 1px solid #edf0ec; color: #4b5850; font: 8px 'DM Mono'; }
 .risk-quarter-table > div:first-child { position: sticky; top: 0; border-top: 0; background: #eaf1e8; color: #66746c; }
