@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { strategyApi } from './strategyApi'
-import type { FilterRule, ScoreRule, ShadowHealthSpec, ShadowHealthVariant, StrategyFactorOption, StrategyJob, StrategyOptions, StrategyPreflight, StrategyPreview, StrategyRequest } from './strategyApi'
+import ShadowTimeline from './ShadowTimeline'
+import type { FilterRule, ScoreRule, ShadowHealthSpec, ShadowHealthVariant, StrategyFactorOption, StrategyJob, StrategyOptions, StrategyPreflight, StrategyPreview, StrategyRequest, UniverseSegment } from './strategyApi'
 
 const DEFAULT_SCORE = ['jqdata-earnings-to-price-ratio', 'jqdata-cash-earnings-to-price-ratio']
 const DEFAULT_FILTERS = ['jqdata-share-turnover-monthly', 'jqdata-daily-standard-deviation']
+const ALL_UNIVERSE_SEGMENTS: UniverseSegment[] = ['SH_MAIN', 'SZ_MAIN', 'CHINEXT', 'STAR', 'BSE']
 export const STRATEGY_JOB_STORAGE_KEY = 'alpha-research.strategy-current-job-id'
 export const STRATEGY_JOB_EVENT = 'alpha-research:strategy-job-changed'
 const STRATEGY_DRAFT_STORAGE_KEY = 'alpha-research.strategy-draft'
@@ -20,6 +22,19 @@ const DEFAULT_SHADOW: ShadowHealthSpec = {
   regime_ordinary_drawdown: .08, regime_severe_drawdown: .15,
   regime_base_exposure: .50, regime_weak_exposure: .30, regime_strong_exposure: 1,
   regime_down_confirmation_sessions: 2, regime_up_confirmation_sessions: 5,
+}
+
+function restoreShadow(value: Partial<ShadowHealthSpec>): ShadowHealthSpec {
+  const savedNumbers = Object.fromEntries(
+    Object.keys(DEFAULT_SHADOW)
+      .filter((key) => key !== 'experiment_variant' && typeof value[key as keyof ShadowHealthSpec] === 'number')
+      .map((key) => [key, value[key as keyof ShadowHealthSpec]]),
+  ) as Partial<ShadowHealthSpec>
+  return {
+    ...DEFAULT_SHADOW,
+    ...savedNumbers,
+    experiment_variant: value.experiment_variant === 'S4V3' ? 'S4V3' : 'S0',
+  }
 }
 
 function savedDraft(): Partial<StrategyRequest> | null {
@@ -60,10 +75,12 @@ function FactorSelect({ options, value, onChange }: { options: StrategyOptions; 
   </select>
 }
 
-function EquityChart({ daily, benchmark, drawdown }: {
+export function EquityChart({ daily, benchmark, drawdown, hoverDate, onHoverDate }: {
   daily: NonNullable<StrategyJob['result']>['daily']
   benchmark?: NonNullable<StrategyJob['result']>['benchmark']
   drawdown?: NonNullable<StrategyJob['result']>['drawdown_period']
+  hoverDate?: string | null
+  onHoverDate?: (date: string | null) => void
 }) {
   if (daily.length < 2) return null
   const strategy = daily.map((item) => ({ session: item.session, value: item.nav / daily[0].nav - 1 }))
@@ -87,21 +104,59 @@ function EquityChart({ daily, benchmark, drawdown }: {
   const peakIndex = drawdown ? daily.findIndex((item) => item.session === drawdown.peak_session) : -1
   const recoveryIndex = drawdown ? daily.findIndex((item) => item.session === drawdown.recovery_session) : -1
   const drawdownEnd = recoveryIndex >= 0 ? recoveryIndex : daily.length - 1
+  const hoverIndex = hoverDate ? daily.findIndex((item) => item.session === hoverDate) : -1
+  const selectedIndex = hoverIndex >= 0 ? hoverIndex : daily.length - 1
+  const selected = daily[selectedIndex]
+  const selectedStrategyReturn = strategy[selectedIndex].value
+  const selectedBenchmarkReturn = benchmarkBySession.get(selected.session)
+  const selectedExcessReturn = selectedBenchmarkReturn == null ? null : selectedStrategyReturn - selectedBenchmarkReturn
+  const highestNav = Math.max(...daily.slice(0, selectedIndex + 1).map((item) => item.nav))
+  const selectedDrawdown = highestNav ? selected.nav / highestNav - 1 : 0
+  const hasRecordedActualExposure = selected.actual_stock_exposure != null
+  const hasActualStockPosition = selected.positions > 0 && hasRecordedActualExposure
+  const selectedActualStockExposure = hasActualStockPosition ? selected.actual_stock_exposure : null
+  const onMove = (event: React.MouseEvent<SVGSVGElement>) => {
+    if (!onHoverDate) return
+    const bounds = event.currentTarget.getBoundingClientRect()
+    const relative = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width))
+    const index = Math.max(0, Math.min(daily.length - 1, Math.round((relative * 1000 - left) / width * (daily.length - 1))))
+    onHoverDate(daily[index].session)
+  }
   const peakToRecoveryDays = drawdown?.peak_to_recovery_calendar_days ?? (drawdown?.recovery_session ? Math.round((new Date(drawdown.recovery_session).getTime() - new Date(drawdown.peak_session).getTime()) / 86_400_000) : 0)
   const recoveredText = drawdown?.recovered
     ? `最大回撤区间：${drawdown.peak_to_recovery_sessions} 个交易日 / ${peakToRecoveryDays} 天`
     : '最大回撤尚未恢复'
   return <div className="strategy-chart">
     <div className="strategy-chart-legend"><span className="strategy-line">策略 {percent(strategy.at(-1)?.value)}</span>{benchmark && <span className="benchmark-line">沪深300 {percent(benchmark.summary.total_return)}</span>}</div>
-    <svg viewBox="0 0 1000 240" preserveAspectRatio="none" role="img" aria-label="策略与沪深300累计收益走势">
+    <div className="strategy-chart-hover" aria-live="polite">
+      <div className="strategy-chart-hover-main">
+        <strong>{hoverIndex >= 0 ? '查看日期' : '截止日期'} <b>{selected.session}</b></strong>
+        <span>策略累计 <b>{percent(selectedStrategyReturn)}</b></span>
+        {benchmark && <span>沪深300 <b>{percent(selectedBenchmarkReturn)}</b></span>}
+        {selectedExcessReturn != null && <span>超额收益 <b>{percent(selectedExcessReturn)}</b></span>}
+        <span className={selectedDrawdown < 0 ? 'loss' : ''}>当日回撤 <b>{percent(selectedDrawdown)}</b></span>
+        <span className={selected.daily_return < 0 ? 'loss' : ''}>当日收益 <b>{percent(selected.daily_return)}</b></span>
+      </div>
+      <div className="strategy-chart-hover-exposure">实际股票仓位 <b>{selectedActualStockExposure == null ? '—' : percent(selectedActualStockExposure)}</b></div>
+    </div>
+    <svg viewBox="0 0 1000 240" preserveAspectRatio="none" role="img" onMouseMove={onMove} onMouseLeave={() => onHoverDate?.(null)} aria-label="策略与沪深300累计收益走势">
       {yTicks.map((tick) => <g className="chart-y-tick" key={tick}><line x1={left} x2={1000 - right} y1={y(tick)} y2={y(tick)} /><text x={left - 7} y={y(tick) + 3} textAnchor="end">{percent(tick)}</text></g>)}
       {years.map((item) => <g className="chart-x-tick" key={item.label}><line x1={x(item.index)} x2={x(item.index)} y1={top} y2={top + height} /><text x={x(item.index)} y={232} textAnchor={item.index === 0 ? 'start' : 'middle'}>{item.label}</text></g>)}
       {benchmark && <polyline className="benchmark-series" points={polyline(strategy.map((item) => benchmarkBySession.get(item.session)))} />}
       <polyline className="strategy-series" points={polyline(strategy.map((item) => item.value))} />
+      {hoverIndex >= 0 && <line className="shadow-cursor" x1={x(hoverIndex)} x2={x(hoverIndex)} y1={top} y2={top + height} />}
       {drawdown && peakIndex >= 0 && <g className="drawdown-marker"><line x1={x(peakIndex)} x2={x(drawdownEnd)} y1="10" y2="10" /><line x1={x(peakIndex)} x2={x(peakIndex)} y1="7" y2="14" /><line x1={x(drawdownEnd)} x2={x(drawdownEnd)} y1="7" y2="14" /><text x={(x(peakIndex) + x(drawdownEnd)) / 2} y="7" textAnchor="middle">{recoveredText}</text></g>}
     </svg>
     {drawdown && <div className="strategy-chart-note"><span>最大回撤 {percent(drawdown.drawdown)}：峰值 {drawdown.peak_session} → 低点 {drawdown.trough_session}</span><b>{drawdown.recovered ? `低点后 ${drawdown.recovery_sessions} 个交易日恢复于 ${drawdown.recovery_session}` : '截至回测结束未恢复'}</b></div>}
   </div>
+}
+
+function ResultCharts({ result }: { result: NonNullable<StrategyJob['result']> }) {
+  const [hoverDate, setHoverDate] = useState<string | null>(null)
+  return <>
+    <EquityChart daily={result.daily} benchmark={result.benchmark} drawdown={result.drawdown_period} hoverDate={hoverDate} onHoverDate={setHoverDate} />
+    <ShadowTimeline result={result} hoverDate={hoverDate} onHoverDate={setHoverDate} />
+  </>
 }
 
 export default function StrategyBacktest() {
@@ -110,6 +165,7 @@ export default function StrategyBacktest() {
   const [name, setName] = useState('通用多因子策略 v1')
   const [start, setStart] = useState('2020-01-02')
   const [end, setEnd] = useState('2025-12-31')
+  const [universeSegments, setUniverseSegments] = useState<UniverseSegment[]>(ALL_UNIVERSE_SEGMENTS)
   const [previewDate, setPreviewDate] = useState('2025-12-30')
   const [scoreRules, setScoreRules] = useState<ScoreRule[]>([])
   const [filterRules, setFilterRules] = useState<FilterRule[]>([])
@@ -152,6 +208,7 @@ export default function StrategyBacktest() {
       setFilterRules(usableFilters ? usableFilters : filters.map((factor) => ({ factor_id: factor.factor_id, release_id: factor.release_id, mode: 'EXCLUDE_HIGH', fraction: .2, missing_policy: 'EXCLUDE' })))
       if (draft) {
         if (typeof draft.name === 'string') setName(draft.name)
+        if (draft.universe_segments?.length) setUniverseSegments(draft.universe_segments)
         if (typeof draft.exclude_st === 'boolean') setExcludeSt(draft.exclude_st)
         if (typeof draft.exclude_abnormal_status === 'boolean') setExcludeAbnormalStatus(draft.exclude_abnormal_status)
         if (typeof draft.minimum_listed_sessions === 'number') setListedSessions(draft.minimum_listed_sessions)
@@ -167,7 +224,7 @@ export default function StrategyBacktest() {
         if (typeof draft.base_slippage_bps === 'number') setSlippage(draft.base_slippage_bps)
         if (typeof draft.square_root_impact_bps === 'number') setImpact(draft.square_root_impact_bps)
         if (typeof draft.maximum_participation_rate === 'number') setParticipation(draft.maximum_participation_rate * 100)
-        if (draft.shadow_health) setShadowHealth({ ...DEFAULT_SHADOW, ...draft.shadow_health })
+        if (draft.shadow_health) setShadowHealth(restoreShadow(draft.shadow_health))
       }
       const chosen = [
         ...(usableScores?.length ? usableScores.map((rule) => factorById(loaded, rule.factor_id)).filter(Boolean) : scores),
@@ -206,7 +263,7 @@ export default function StrategyBacktest() {
   }, [job?.job_id, job?.status])
 
   const payload = useMemo<StrategyRequest>(() => ({
-    name, start, end, universe_id: 'ALL-A-PIT', selection_sequence_mode: selectionSequenceMode,
+    name, start, end, universe_id: 'ALL-A-PIT', universe_segments: universeSegments, selection_sequence_mode: selectionSequenceMode,
     score_rules: scoreRules, filter_rules: filterRules,
     exclude_st: excludeSt, exclude_abnormal_status: excludeAbnormalStatus,
     minimum_listed_sessions: listedSessions, target_count: targetCount,
@@ -215,7 +272,7 @@ export default function StrategyBacktest() {
     sell_stamp_duty_bps: stampDuty, base_slippage_bps: slippage, square_root_impact_bps: impact,
     maximum_slippage_bps: 100, maximum_participation_rate: participation / 100,
     shadow_health: shadowHealth,
-  }), [name, start, end, selectionSequenceMode, scoreRules, filterRules, excludeSt, excludeAbnormalStatus, listedSessions, targetCount, retentionRank, rebalanceSessions, initialCash, cashReserve, buyFee, sellFee, stampDuty, slippage, impact, participation, shadowHealth])
+  }), [name, start, end, universeSegments, selectionSequenceMode, scoreRules, filterRules, excludeSt, excludeAbnormalStatus, listedSessions, targetCount, retentionRank, rebalanceSessions, initialCash, cashReserve, buyFee, sellFee, stampDuty, slippage, impact, participation, shadowHealth])
 
   useEffect(() => {
     if (draftRestored) window.localStorage.setItem(STRATEGY_DRAFT_STORAGE_KEY, JSON.stringify(payload))
@@ -227,6 +284,12 @@ export default function StrategyBacktest() {
   const addScore = () => { if (!options) return; const factor = options.factors.find((item) => !scoreRules.some((rule) => rule.factor_id === item.factor_id)); if (factor) setScoreRules([...scoreRules, { factor_id: factor.factor_id, release_id: factor.release_id, direction: factor.expected_direction, weight: 10, transform: 'PERCENTILE' }]) }
   const addFilter = () => { if (!options) return; const factor = options.factors.find((item) => !filterRules.some((rule) => rule.factor_id === item.factor_id)); if (factor) setFilterRules([...filterRules, { factor_id: factor.factor_id, release_id: factor.release_id, mode: 'EXCLUDE_HIGH', fraction: .2, missing_policy: 'EXCLUDE' }]) }
   const updateShadow = (patch: Partial<ShadowHealthSpec>) => { setShadowHealth((value) => ({ ...value, ...patch })); resetResults() }
+  const toggleUniverseSegment = (segment: UniverseSegment) => {
+    setUniverseSegments((current) => current.includes(segment)
+      ? current.length === 1 ? current : current.filter((item) => item !== segment)
+      : [...current, segment])
+    resetResults()
+  }
   const runAction = async (action: 'preflight' | 'preview' | 'backtest') => {
     setBusy(true); setError('')
     try {
@@ -245,8 +308,8 @@ export default function StrategyBacktest() {
 
     <div className="strategy-layout"><div className="strategy-config">
       <section className="strategy-panel"><header><span>01</span><div><h2>范围与股票池</h2><p>全部因子必须覆盖同一个回测区间。</p></div></header><div className="strategy-fields">
-        <label><span>策略名称</span><input value={name} onChange={(e) => { setName(e.target.value); resetResults() }} /></label>
-        <label><span>股票池</span><select><option>历史全 A 股票池</option></select></label>
+        <label className="strategy-name-field"><span>策略名称</span><input value={name} onChange={(e) => { setName(e.target.value); resetResults() }} /></label>
+        <div className="strategy-universe"><span>股票池范围</span><div>{options?.universe_segments?.map((segment) => <label key={segment.id}><input type="checkbox" checked={universeSegments.includes(segment.id)} onChange={() => toggleUniverseSegment(segment.id)} /><b>{segment.name}</b></label>)}</div></div>
         <label><span>选股序列口径</span><select value={selectionSequenceMode} onChange={(e) => { setSelectionSequenceMode(e.target.value as 'ACTUAL_POSITIONS' | 'MODEL_TARGETS'); resetResults() }}><option value="MODEL_TARGETS">模型目标序列（实验共用）</option><option value="ACTUAL_POSITIONS">实际持仓序列（原逻辑）</option></select></label>
         <label><span>开始日期</span><input type="date" value={start} onChange={(e) => { setStart(e.target.value); resetResults() }} /></label>
         <label><span>结束日期</span><input type="date" value={end} onChange={(e) => { setEnd(e.target.value); resetResults() }} /></label>
@@ -312,7 +375,7 @@ export default function StrategyBacktest() {
       <button className="run-backtest" disabled={busy || !scoreRules.length || job?.status === 'RUNNING'} onClick={() => runAction('backtest')}>{job?.status === 'RUNNING' ? '正在回测…' : busy ? '正在创建回测任务…' : '开始策略回测'}</button>
       {preflight && <div className="strategy-ready"><b>✓ 数据预检通过</b><span>{preflight.session_count} 个交易日 · 预计选股调仓 {preflight.estimated_rebalances} 次</span>{preflight.shadow_health?.data_check && <span>市场与影子策略环境仓位将在回测中滚动计算</span>}<small>共同范围 {preflight.common_range.start} → {preflight.common_range.end}</small></div>}
       {job?.status === 'RUNNING' && <div className="strategy-job">
-        <p><b>{job.phase}</b><span>{job.progress}%</span></p>
+        <p><b>{/^\?+$/.test(job.phase) ? '准备影子基线回测' : job.phase}</b><span>{job.progress}%</span></p>
         <i><em style={{ width: `${job.progress}%` }} /></i>
         <div className={`strategy-process-state ${job.process_alive !== false ? 'alive' : ''}`}><i />{job.process_alive !== false ? '回测进程正在运行' : '未检测到回测进程'}</div>
         {<div className="strategy-progress-detail">
@@ -345,7 +408,7 @@ export default function StrategyBacktest() {
           <div><span>总交易成本</span><b>¥{result.summary.total_cost.toLocaleString('zh-CN', { maximumFractionDigits: 0 })}</b></div>
         </div>
       </div>
-      <EquityChart daily={result.daily} benchmark={result.benchmark} drawdown={result.drawdown_period} />
+      <ResultCharts result={result} />
       <div className="annual-results">{result.annual.map((item) => <div key={item.year}><span>{item.year}</span><b>{percent(item.return)}</b></div>)}</div>
       {result.shadow_health && <div className="risk-result">
         <h3>影子策略健康仓位结果 · {result.shadow_health.experiment_variant}</h3>

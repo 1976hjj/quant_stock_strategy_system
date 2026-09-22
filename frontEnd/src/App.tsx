@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 import FactorAssetLibrary from './FactorAssetLibrary'
 import FactorLibrary from './FactorLibrary'
+import DataManager from './DataManager'
 import RotationBacktest from './RotationBacktest'
 import StrategyBacktest, { STRATEGY_JOB_EVENT, STRATEGY_JOB_STORAGE_KEY } from './StrategyBacktest'
 import StrategyBacktestHistory from './StrategyBacktestHistory'
@@ -41,13 +42,13 @@ const PIPELINE_NAMES: Record<string, string> = {
 }
 
 const DEFAULT_STAGES: UiStageId[] = ['m4_1', 'm4_2', 'm4_3', 'm4_4', 'm4_5']
-type View = 'CALCULATE' | 'ASSETS' | 'STRATEGY' | 'ROTATION' | 'STRATEGY_HISTORY'
+type View = 'CALCULATE' | 'ASSETS' | 'STRATEGY' | 'ROTATION' | 'STRATEGY_HISTORY' | 'DATA'
 const VIEW_STORAGE_KEY = 'alpha-research.current-view'
 const FACTOR_JOB_STORAGE_KEY = 'alpha-research.factor-job-id'
 
 function savedView(): View {
   const value = window.localStorage.getItem(VIEW_STORAGE_KEY)
-  return value === 'ASSETS' || value === 'STRATEGY' || value === 'ROTATION' || value === 'STRATEGY_HISTORY' ? value : 'CALCULATE'
+  return value === 'ASSETS' || value === 'STRATEGY' || value === 'ROTATION' || value === 'STRATEGY_HISTORY' || value === 'DATA' ? value : 'CALCULATE'
 }
 
 function compactId(value: string) {
@@ -117,6 +118,7 @@ export default function App() {
   const [factorSubmitting, setFactorSubmitting] = useState(false)
   const [factorError, setFactorError] = useState('')
   const [catalogRefresh, setCatalogRefresh] = useState(0)
+  const refreshedFactorStates = useRef(new Set<string>())
 
   const release = options?.factor_releases.find((item) => item.release_id === releaseId)
   const executionSelected = stages.includes('m4_6')
@@ -237,14 +239,22 @@ export default function App() {
       api.factorCalculationStatus(factorJob.job_id).then(async (next) => {
         setFactorJob(next)
         if (next.status === 'PASS' && next.release_id) {
-          const loadedOptions = await api.options()
-          setOptions(loadedOptions)
-          setReleaseId(next.release_id)
-          setWindowStart(next.start)
-          setWindowEnd(next.end)
-          const refreshed = await api.factorCatalog({ page: 1, pageSize: 1, query: next.factor_id })
-          if (refreshed.items[0]) setSelectedFactor(refreshed.items[0])
-          setCatalogRefresh((value) => value + 1)
+          const refreshId = `${next.job_id}:${next.accuracy_status}`
+          if (refreshedFactorStates.current.has(refreshId)) return
+          refreshedFactorStates.current.add(refreshId)
+          try {
+            const loadedOptions = await api.options()
+            setOptions(loadedOptions)
+            setReleaseId(next.release_id)
+            setWindowStart(next.start)
+            setWindowEnd(next.end)
+            const refreshed = await api.factorCatalog({ page: 1, pageSize: 1, query: next.factor_id })
+            if (refreshed.items[0]) setSelectedFactor(refreshed.items[0])
+            setCatalogRefresh((value) => value + 1)
+          } catch (reason) {
+            refreshedFactorStates.current.delete(refreshId)
+            throw reason
+          }
         }
       }).catch((reason) => setFactorError(reason.message))
     }, 1500)
@@ -282,7 +292,7 @@ export default function App() {
   }
 
   const calculateSelectedFactor = async () => {
-    if (!selectedFactor || selectedFactor.source_collection === 'CURRENT') return
+    if (!selectedFactor) return
     setFactorSubmitting(true)
     setError('')
     setFactorError('')
@@ -416,13 +426,13 @@ export default function App() {
     <main>
       <header className="topbar">
         <div className="brand"><span className="brand-mark">M4</span><div><b>因子研究台</b><small>FACTOR EVIDENCE WORKBENCH</small></div></div>
-        <nav className="main-nav"><button className={view === 'CALCULATE' ? 'active' : ''} onClick={() => setView('CALCULATE')}>因子计算</button><button className={view === 'ASSETS' ? 'active' : ''} onClick={() => setView('ASSETS')}>因子资产库</button><button className={view === 'STRATEGY' ? 'active' : ''} onClick={() => setView('STRATEGY')}>因子策略{factorStrategyRunning && <i className="nav-running-dot" />}</button><button className={view === 'ROTATION' ? 'active' : ''} onClick={() => setView('ROTATION')}>轮动回测{rotationRunning && <i className="nav-running-dot" />}</button><button className={view === 'STRATEGY_HISTORY' ? 'active' : ''} onClick={() => setView('STRATEGY_HISTORY')}>历史回测结果</button></nav>
+        <nav className="main-nav"><button className={view === 'DATA' ? 'active' : ''} onClick={() => setView('DATA')}>数据管理</button><button className={view === 'CALCULATE' ? 'active' : ''} onClick={() => setView('CALCULATE')}>因子计算</button><button className={view === 'ASSETS' ? 'active' : ''} onClick={() => setView('ASSETS')}>因子资产库</button><button className={view === 'STRATEGY' ? 'active' : ''} onClick={() => setView('STRATEGY')}>因子策略{factorStrategyRunning && <i className="nav-running-dot" />}</button><button className={view === 'ROTATION' ? 'active' : ''} onClick={() => setView('ROTATION')}>轮动回测{rotationRunning && <i className="nav-running-dot" />}</button><button className={view === 'STRATEGY_HISTORY' ? 'active' : ''} onClick={() => setView('STRATEGY_HISTORY')}>历史回测结果</button></nav>
         <div className={`api-state ${apiOnline ? 'online' : ''}`}><i />{apiOnline ? '计算后端已连接' : '计算后端未连接'}</div>
       </header>
 
       {error && <div className="error-banner"><b>没有继续执行</b><span>{error}</span><button onClick={() => setError('')}>×</button></div>}
 
-      {view === 'STRATEGY' ? <StrategyBacktest /> : view === 'ROTATION' ? <RotationBacktest onOpenFactorCalculate={() => setView('CALCULATE')} onOpenHistory={() => setView('STRATEGY_HISTORY')} /> : view === 'STRATEGY_HISTORY' ? <StrategyBacktestHistory onOpenRunning={(strategyType) => setView(strategyType === 'ROTATION' ? 'ROTATION' : 'STRATEGY')} /> : view === 'CALCULATE' ? <>
+      {view === 'DATA' ? <DataManager /> : view === 'STRATEGY' ? <StrategyBacktest /> : view === 'ROTATION' ? <RotationBacktest onOpenFactorCalculate={() => setView('CALCULATE')} onOpenHistory={() => setView('STRATEGY_HISTORY')} /> : view === 'STRATEGY_HISTORY' ? <StrategyBacktestHistory onOpenRunning={(strategyType) => setView(strategyType === 'ROTATION' ? 'ROTATION' : 'STRATEGY')} /> : view === 'CALCULATE' ? <>
       <FactorLibrary selected={selectedFactor} onSelect={chooseFactor} refreshKey={catalogRefresh} />
 
       <div className="workspace">
@@ -434,13 +444,13 @@ export default function App() {
               <div><span>{selectedFactor.source_collection === 'ALPHA158' ? 'ALPHA158' : selectedFactor.source_collection === 'JQDATA' ? 'JQDATA' : '现有因子'}</span><h3>{selectedFactor.chinese_name}</h3><code>{selectedFactor.external_name || selectedFactor.factor_id} · v{selectedFactor.factor_version}</code></div>
               <b className={selectedFactor.accuracy_status === 'FAIL' ? 'failed' : selectedFactor.calculated ? 'ready' : ''}>{selectedFactor.status_label}</b>
             </div>}
-            {selectedFactor && selectedFactor.source_collection !== 'CURRENT' && <div className="factor-compute-box">
+            {selectedFactor && <div className="factor-compute-box">
               {factorError && <div className="factor-compute-error"><b>未开始计算</b><span>{factorError}</span></div>}
-              <p>{selectedFactor.calculated ? '这个因子已经有计算结果，日期仍可修改。重新计算完成后，新结果会成为当前使用版本。' : '这个因子目前只有公式，还没有因子值。先按你设定的日期范围单独计算并发布。'}</p>
+              <p>{selectedFactor.calculated ? '已有历史计算结果。可修改日期重新计算；新结果发布为独立版本，旧版本仍可复现。M4 检验需在新版本上重新运行。' : '这个因子目前只有公式，还没有因子值。先按你设定的日期范围单独计算并发布。'}</p>
               <div className="compute-dates"><Field label="计算开始"><input type="date" disabled={factorSubmitting || factorJob?.status === 'RUNNING'} value={windowStart} onChange={(event) => changeFactorDate('start', event.target.value)} /></Field><Field label="计算结束"><input type="date" disabled={factorSubmitting || factorJob?.status === 'RUNNING'} value={windowEnd} onChange={(event) => changeFactorDate('end', event.target.value)} /></Field></div>
-              <button className="primary compute-button" disabled={factorSubmitting || factorJob?.status === 'RUNNING' || !windowStart || !windowEnd || windowEnd < windowStart} onClick={calculateSelectedFactor}>{factorSubmitting ? '正在提交任务…' : factorJob?.status === 'RUNNING' ? '因子正在计算中…' : selectedFactor.calculated ? '按此日期重新计算并替换当前版本' : '计算并发布这个因子'}</button>
+              <button className="primary compute-button" disabled={factorSubmitting || factorJob?.status === 'RUNNING' || !windowStart || !windowEnd || windowEnd < windowStart} onClick={calculateSelectedFactor}>{factorSubmitting ? '正在提交任务…' : factorJob?.status === 'RUNNING' ? '因子正在计算中…' : selectedFactor.calculated ? '按此日期重新计算并发布新版本' : '计算并发布这个因子'}</button>
               {factorSubmitting && !factorJob && <div className="compute-status running"><div><b>正在提交任务</b><strong>请稍候</strong></div><i><span className="indeterminate" /></i><small>正在连接计算后端，成功后会立即显示任务编号和进度。</small></div>}
-              {factorJob && <div className={`compute-status ${factorJob.accuracy_status === 'FAIL' ? 'fail' : factorJob.status.toLowerCase()}`}>
+              {factorJob && <div className={`compute-status ${factorJob.accuracy_status === 'FAIL' ? 'fail' : factorJob.result?.calculation?.mode === 'FULL_AFTER_MISMATCH' ? 'mismatch' : factorJob.status.toLowerCase()}`}>
                 <div><b>{factorJob.status === 'RUNNING' || factorJob.accuracy_status === 'PENDING' || factorJob.accuracy_status === 'FAIL' ? factorJob.phase : factorJob.status === 'PASS' ? '计算完成' : factorJob.status === 'FAIL' ? '计算失败' : '已停止'}</b><strong>{factorJob.progress}%</strong></div>
                 <i><span style={{ width: `${factorJob.progress}%` }} /></i>
                 <p>{factorJob.message}</p>

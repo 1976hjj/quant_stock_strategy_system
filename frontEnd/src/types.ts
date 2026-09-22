@@ -148,6 +148,19 @@ export interface FactorJobStatus {
     row_count?: number
     session_count?: number
     instrument_count?: number
+    calculation?: {
+      mode: 'FULL' | 'INCREMENTAL' | 'FULL_AFTER_MISMATCH'
+      message: string
+      parent_release_id?: string
+      overlap?: {
+        start: string
+        end: string
+        old_rows: number
+        new_rows: number
+        different_rows: number
+        matched: boolean
+      }
+    } | null
   } | null
   log_tail: string
   phase: string

@@ -178,6 +178,7 @@ export interface StrategyRequest {
   start: string
   end: string
   universe_id: 'ALL-A-PIT'
+  universe_segments: UniverseSegment[]
   selection_sequence_mode: 'ACTUAL_POSITIONS' | 'MODEL_TARGETS'
   score_rules: ScoreRule[]
   filter_rules: FilterRule[]
@@ -203,9 +204,12 @@ export interface StrategyRequest {
   shadow_health: ShadowHealthSpec
 }
 
+export type UniverseSegment = 'SH_MAIN' | 'SZ_MAIN' | 'CHINEXT' | 'STAR' | 'BSE'
+
 export interface StrategyOptions {
   factors: StrategyFactorOption[]
   universes: Array<{ id: string; name: string }>
+  universe_segments: Array<{ id: UniverseSegment; name: string }>
   defaults: Record<string, number>
   shadow_health_defaults?: ShadowHealthSpec
 }
@@ -272,7 +276,7 @@ export interface StrategyResult {
     position_basis: string
     cost_basis_method: string
   }
-  daily: Array<{ session: string; nav: number; cash: number; positions: number; daily_return: number; turnover: number; cost: number; target_regime_exposure?: number; target_shadow_exposure?: number; target_combined_exposure?: number; actual_stock_exposure?: number; shadow_position_breadth?: number | null; cash_interest?: number }>
+  daily: Array<{ session: string; nav: number; cash: number; positions: number; daily_return: number; turnover: number; cost: number; target_regime_exposure?: number; target_shadow_exposure?: number; target_combined_exposure?: number; actual_stock_exposure?: number; cash_interest?: number }>
   shadow_health?: {
     experiment_variant: ShadowHealthVariant
     initial_exposure: number
@@ -281,6 +285,7 @@ export interface StrategyResult {
     exposure_change_count: number
     sample_classification: string
     changes: Array<{ signal_session: string; execution_session: string | null; shadow_nav: number; shadow_nav_ma: number | null; shadow_drawdown: number; shadow_breadth: number | null; from_exposure: number; to_exposure: number; external_market_index?: number; external_market_ma?: number; external_trend_gap?: number; external_breadth?: number; from_regime?: string; to_regime?: string; trigger?: string }>
+    timeline?: Array<{ session: string; shadow_return: number; shadow_drawdown: number; target_exposure: number }>
     signal_scope?: string
     source?: { experiment_variant: 'S0'; run_id: string; selection_fingerprint: string; managed_selection_fingerprint?: string; selection_sequence_matches?: boolean; average_actual_stock_exposure: number }
   }
@@ -352,6 +357,7 @@ export interface StrategyTrade {
   realized_pnl_cny?: number | null
   realized_pnl_pct?: number | null
   post_quantity: number
+  post_average_cost_price?: number | null
   post_security_value_cny?: number | null
   post_invested_value_cny?: number | null
   post_account_value_cny?: number | null
@@ -407,10 +413,6 @@ export interface StrategyJob {
   rebalance_count?: number | null
   position_count?: number | null
   query_progress?: number | null
-  completed_parameter_sets?: number | null
-  total_parameter_sets?: number | null
-  remaining_parameter_sets?: number | null
-  current_parameters?: Partial<ShadowHealthSpec> | null
   trade_detail_available?: boolean
   execution_model_valid?: boolean
 }

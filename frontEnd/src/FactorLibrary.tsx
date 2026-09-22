@@ -37,12 +37,14 @@ export default function FactorLibrary({ selected, onSelect, refreshKey = 0 }: {
   }, [category, source, status, debouncedSearch])
 
   useEffect(() => {
+    let active = true
     setLoading(true)
     setError('')
     api.factorCatalog({ page, pageSize: 24, query: debouncedSearch, category, source, status })
-      .then(setData)
-      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)))
-      .finally(() => setLoading(false))
+      .then((next) => { if (active) setData(next) })
+      .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : String(reason)) })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
   }, [category, source, status, debouncedSearch, page, refreshKey])
 
   const counts = data?.counts
@@ -88,10 +90,10 @@ export default function FactorLibrary({ selected, onSelect, refreshKey = 0 }: {
       </div>
 
       {error && <div className="catalog-message error">目录读取失败：{error}</div>}
-      {loading && <div className="catalog-message">正在读取因子目录和已有证据…</div>}
+      {loading && !data && <div className="catalog-message">正在读取因子目录和已有证据…</div>}
       {!loading && data?.items.length === 0 && <div className="catalog-message">当前筛选条件下没有因子。</div>}
 
-      {!loading && <div className="factor-card-grid">
+      {data && <div className="factor-card-grid" aria-busy={loading}>
         {data?.items.map((factor) => <article className={`factor-card status-${factor.status.toLowerCase()} ${selected?.factor_id === factor.factor_id ? 'selected-factor' : ''}`} key={`${factor.factor_id}-${factor.factor_version}`}>
           <div className="factor-card-head">
             <span className={`source-tag ${factor.source_collection.toLowerCase()}`}>{factor.source_collection === 'ALPHA158' ? 'ALPHA158' : factor.source_collection === 'JQDATA' ? 'JQDATA' : '现有'}</span>

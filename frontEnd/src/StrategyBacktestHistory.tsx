@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { strategyApi } from './strategyApi'
-import type { StrategyJob, StrategyJobHistory } from './strategyApi'
+import ShadowTimeline from './ShadowTimeline'
+import { EquityChart } from './StrategyBacktest'
+import type { StrategyJob, StrategyJobHistory, StrategyTrade, UniverseSegment } from './strategyApi'
 
 function percent(value: number | null | undefined) {
   return value == null ? '—' : `${(value * 100).toFixed(2)}%`
@@ -14,8 +16,57 @@ function dateTime(value?: string) {
   return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—'
 }
 
+function runDay(value?: string) {
+  if (!value) return ''
+  return new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(value))
+}
+
 function cleanName(value: string) {
   return value.replace(/[?？]/g, '').trim() ? value : '未命名策略'
+}
+
+const UNIVERSE_SEGMENT_LABELS: Record<UniverseSegment, string> = {
+  SH_MAIN: '沪市主板',
+  SZ_MAIN: '深市主板',
+  CHINEXT: '创业板',
+  STAR: '科创板',
+  BSE: '北交所',
+}
+
+function universeScope(request: StrategyJob['request']) {
+  const segments = request && 'universe_segments' in request ? request.universe_segments : undefined
+  if (segments?.length) return segments.map((segment) => UNIVERSE_SEGMENT_LABELS[segment]).join(' · ')
+  return request?.universe_id === 'ALL-A-PIT' ? '全A股票池（历史记录）' : '未保存（旧记录）'
+}
+
+function universeScopeSummary(request: StrategyJob['request']) {
+  const segments = request && 'universe_segments' in request ? request.universe_segments : undefined
+  if (!segments?.length) return request?.universe_id === 'ALL-A-PIT' ? '全A股' : '未保存'
+  if (segments.length === Object.keys(UNIVERSE_SEGMENT_LABELS).length) return '全A股'
+  return segments.map((segment) => UNIVERSE_SEGMENT_LABELS[segment]).join(' · ')
+}
+
+function rebalanceIntervalSummary(request: StrategyJob['request']) {
+  if (!request) return '—'
+  if ('rebalance_sessions' in request) return `${request.rebalance_sessions}日`
+  if (!('candidates' in request) || !Array.isArray(request.candidates)) return '—'
+  const intervals = [...new Set(request.candidates.map((candidate) => candidate.rebalance_sessions))]
+  return intervals.length === 1 ? `${intervals[0]}日` : `${intervals.join(' / ')}日`
+}
+
+function displayedCostPrice(trade: StrategyTrade) {
+  if (trade.post_average_cost_price != null) {
+    return { value: trade.post_average_cost_price, label: '成交后持仓均价' }
+  }
+  if (trade.side === 'SELL' && trade.cost_basis_cny != null && trade.quantity) {
+    return { value: trade.cost_basis_cny / trade.quantity, label: '卖出对应成本' }
+  }
+  if (trade.side === 'BUY' && trade.quantity) {
+    return { value: (trade.amount_cny + trade.total_cost_cny) / trade.quantity, label: '该笔买入成本' }
+  }
+  return { value: null, label: '成本数据未保存' }
 }
 
 const STATUS_LABEL: Record<StrategyJobHistory['status'], string> = {
@@ -81,13 +132,14 @@ function YearlyTransactions({ jobId, annual, available }: { jobId: string; annua
           </div>
           <p className="history-trade-explain">本年净值收益按年初、年末账户净值计算；卖出已实现盈亏按股票自买入以来的移动平均成本计算并包含对应现金分红。仓位比例均为成交完成后的即时值：该股占总资产＝该股市值÷账户总资产，总仓位＝全部持仓市值÷账户总资产。同一批调仓按实际执行顺序先卖后买，因此总仓位会先下降、再回升。</p>
           {detail.total === 0 ? <p className="history-trade-note">该年度没有实际成交。</p> : <div className="history-trade-table">
-            <div className="history-trade-head"><span>日期 / 批次</span><span>股票</span><span>方向</span><span>成交股数</span><span>成交价</span><span>成交金额</span><span>费用明细</span><span>卖出已实现盈亏</span><span>成交后该股</span><span>成交后总仓位</span></div>
+            <div className="history-trade-head"><span>日期 / 批次</span><span>股票</span><span>方向</span><span>成交股数</span><span>成交价</span><span>成本价</span><span>成交金额</span><span>费用明细</span><span>卖出已实现盈亏</span><span>成交后该股</span><span>成交后总仓位</span></div>
             {detail.trades.map((trade, index) => <div className="history-trade-row" key={`${trade.session}-${trade.rebalance_id}-${trade.ts_code}-${trade.side}-${index}`}>
               <span className="trade-date">{trade.session}<small>第 {trade.rebalance_id} 次调仓</small></span>
               <span><b>{trade.security_name}</b><small>{trade.ts_code}</small></span>
               <strong className={trade.side === 'BUY' ? 'buy' : 'sell'}>{trade.side === 'BUY' ? '买入' : '卖出'}</strong>
               <b>{number(trade.quantity, 0)} 股</b>
               <b>¥{number(trade.price, 2)}</b>
+              <b className="trade-cost-basis" title={displayedCostPrice(trade).label}>¥{number(displayedCostPrice(trade).value, 4)}<small>{displayedCostPrice(trade).label}</small></b>
               <b>¥{number(trade.amount_cny, 2)}</b>
               <span className="trade-fees">¥{number(trade.total_cost_cny, 2)}<small>佣 {number(trade.commission_cny, 2)} · 税 {trade.side === 'SELL' ? number(trade.stamp_duty_cny, 2) : '—'} · 过 {number(trade.transfer_fee_cny, 2)}</small></span>
               {trade.side === 'SELL' && trade.realized_pnl_cny != null
@@ -126,6 +178,26 @@ function RotationComparison({ result }: { result: NonNullable<StrategyJob['resul
   return <section className="rotation-history-chart"><h3>轮动净值与候选影子净值</h3><div className="rotation-chart-legend">{series.map((item, index) => <span key={item.id}><i style={{ background: colors[index % colors.length] }} />{item.name} <b>{percent(item.values.at(-1))}</b></span>)}</div><svg viewBox="0 0 1000 205" preserveAspectRatio="none" role="img" aria-label="轮动账户与候选组合收益走势"><line x1="20" x2="980" y1={y(0)} y2={y(0)} />{series.map((item, seriesIndex) => <polyline key={item.id} style={{ stroke: colors[seriesIndex % colors.length] }} points={item.values.map((value, index) => `${x(index)},${y(value)}`).join(' ')} />)}</svg><div className="rotation-switch-list">{result.rotation.decisions.filter((item) => item.switched).slice(-20).map((item) => <span key={item.signal_session}><b>{item.signal_session}</b> → {item.active_candidate_id}<small>次日 {item.execution_session} 执行 · 目标 {item.target_stock_count}只</small></span>)}</div></section>
 }
 
+function HistoryShadowTimeline({ result }: { result: NonNullable<StrategyJob['result']> }) {
+  const [hoverDate, setHoverDate] = useState<string | null>(null)
+  return <ShadowTimeline result={result} hoverDate={hoverDate} onHoverDate={setHoverDate} />
+}
+
+function HistoryEquityChart({ result }: { result: NonNullable<StrategyJob['result']> }) {
+  const [hoverDate, setHoverDate] = useState<string | null>(null)
+  if (result.daily.length < 2) return null
+  return <section className="history-equity-chart">
+    <h3>策略账户收益曲线</h3>
+    <EquityChart
+      daily={result.daily}
+      benchmark={result.benchmark || undefined}
+      drawdown={result.drawdown_period}
+      hoverDate={hoverDate}
+      onHoverDate={setHoverDate}
+    />
+  </section>
+}
+
 function Detail({ job }: { job: StrategyJob }) {
   const request = job.request
   const rotationRequest = request && 'candidates' in request ? request : null
@@ -137,6 +209,7 @@ function Detail({ job }: { job: StrategyJob }) {
       <div><dt>任务编号</dt><dd><code>{job.job_id}</code></dd></div>
       <div><dt>回测区间</dt><dd>{request?.start} → {request?.end}</dd></div>
       <div><dt>策略类型</dt><dd>{rotationRequest ? '多组合轮动' : '因子选股'}</dd></div>
+      <div className="history-universe"><dt>股票池范围</dt><dd title={universeScope(request)}>{universeScope(request)}</dd></div>
       {factorRequest && <div><dt>持股 / 保留排名</dt><dd>{factorRequest.target_count} / {factorRequest.retention_rank}</dd></div>}
       {factorRequest && <div><dt>调仓间隔</dt><dd>{factorRequest.rebalance_sessions} 个交易日</dd></div>}
       {factorRequest && <div><dt>选股序列口径</dt><dd>{factorRequest.selection_sequence_mode === 'MODEL_TARGETS' ? '模型目标序列（实验共用）' : '实际持仓序列（原逻辑）'}</dd></div>}
@@ -149,7 +222,7 @@ function Detail({ job }: { job: StrategyJob }) {
     </dl></section>
     {factorRequest && <section><h3>评分因子</h3><div className="detail-rules">{factorRequest.score_rules.map((rule) => <div key={rule.factor_id}><b>{rule.factor_id}</b><span>{rule.direction === 'HIGH' ? '高值优先' : '低值优先'} · 权重 {number(rule.weight)}%</span></div>)}</div></section>}
     {factorRequest && <section><h3>过滤规则</h3><div className="detail-rules">{factorRequest.filter_rules.length ? factorRequest.filter_rules.map((rule) => <div key={rule.factor_id}><b>{rule.factor_id}</b><span>{rule.mode === 'EXCLUDE_HIGH' ? '排除最高' : '排除最低'} {percent(rule.fraction)} · {rule.missing_policy === 'EXCLUDE' ? '缺失排除' : '缺失保留'}</span></div>) : <span className="detail-none">无过滤规则</span>}</div></section>}
-    {factorRequest?.shadow_health && <section><h3>市场与影子策略环境仓位</h3><dl>
+    {factorRequest?.shadow_health?.experiment_variant === 'S4V3' && <section><h3>市场与影子策略环境仓位</h3><dl>
       <div><dt>环境仓位方案</dt><dd>{factorRequest.shadow_health.experiment_variant}</dd></div>
       <div><dt>全A趋势 / 上涨比例回看</dt><dd>MA{factorRequest.shadow_health.external_trend_sessions} / {factorRequest.shadow_health.external_breadth_return_sessions}日</dd></div>
       <div><dt>强 / 弱环境上涨比例</dt><dd>{percent(factorRequest.shadow_health.external_strong_breadth)} / {percent(factorRequest.shadow_health.external_weak_breadth)}</dd></div>
@@ -159,6 +232,9 @@ function Detail({ job }: { job: StrategyJob }) {
       {result?.shadow_health && <><div><dt>平均影子目标仓位</dt><dd>{percent(result.shadow_health.average_target_exposure)}</dd></div><div><dt>平均实际股票仓</dt><dd>{percent(result.shadow_health.average_actual_stock_exposure)}</dd></div><div><dt>影子仓位变化</dt><dd>{result.shadow_health.exposure_change_count} 次</dd></div></>}
       {result?.shadow_health?.source && <><div><dt>影子信号来源</dt><dd>{result.shadow_health.source.experiment_variant}</dd></div><div><dt>来源选股序列指纹</dt><dd title={result.shadow_health.source.selection_fingerprint}><code>{result.shadow_health.source.selection_fingerprint.slice(7, 23)}</code></dd></div></>}
     </dl></section>}
+    {result?.shadow_health?.experiment_variant === 'S4V3' && <HistoryShadowTimeline result={result} />}
+    {result && <HistoryEquityChart result={result} />}
+    {factorRequest?.shadow_health && !['S0', 'S4V3'].includes(factorRequest.shadow_health.experiment_variant) && <section><h3>历史实验配置</h3><p>这是已归档的 {factorRequest.shadow_health.experiment_variant} 回测。完整旧参数保存在下方原始 JSON 报告中。</p></section>}
     {rotationRequest && <section><h3>候选组合与因子</h3><div className="detail-rules">{rotationRequest.candidates.map((candidate) => <div key={candidate.candidate_id}><b>{candidate.name}</b><span>{candidate.score_rules.map((rule) => `${rule.factor_id}（${rule.direction === 'HIGH' ? '高' : '低'}）`).join(' · ')} · 持股 {candidate.target_count}</span></div>)}</div></section>}
     {result?.rotation && <section><h3>轮动执行</h3><dl><div><dt>判断次数</dt><dd>{result.rotation.decision_count}</dd></div><div><dt>实际切换</dt><dd>{result.rotation.switch_count}</dd></div><div><dt>当前组合</dt><dd>{result.rotation.decisions.at(-1)?.active_candidate_id || '—'}</dd></div></dl></section>}
     {result?.rotation && <RotationComparison result={result} />}
@@ -187,18 +263,43 @@ export default function StrategyBacktestHistory({ onOpenRunning }: { onOpenRunni
   const [deleting, setDeleting] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [selectedDay, setSelectedDay] = useState(() => runDay(new Date().toISOString()))
+  const [refreshedAt, setRefreshedAt] = useState<string | null>(null)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (showLoading = false) => {
+    if (showLoading) setLoading(true)
     try {
       const response = await strategyApi.list()
-      setJobs(response.jobs)
+      const selectedJobs = selectedDay
+        ? response.jobs.filter((job) => runDay(job.created_at) === selectedDay)
+        : []
+      const hydrated = await Promise.all(selectedJobs.map(async (job) => {
+        const hasUniverse = job.request && 'universe_segments' in job.request
+        const hasInterval = job.request && (
+          'rebalance_sessions' in job.request || 'candidates' in job.request
+        )
+        if (hasUniverse && hasInterval) return job
+        try {
+          const detail = await strategyApi.status(job.job_id)
+          return { ...job, request: detail.request || job.request }
+        } catch {
+          return job
+        }
+      }))
+      const hydratedById = new Map(hydrated.map((job) => [job.job_id, job]))
+      setJobs(response.jobs.map((job) => hydratedById.get(job.job_id) || job))
       setError('')
+      if (showLoading) {
+        setRefreshedAt(new Date().toLocaleTimeString('zh-CN', {
+          hour: '2-digit', minute: '2-digit', second: '2-digit',
+        }))
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [selectedDay])
 
   const toggleDetail = async (jobId: string) => {
     if (expanded === jobId) { setExpanded(null); return }
@@ -232,26 +333,34 @@ export default function StrategyBacktestHistory({ onOpenRunning }: { onOpenRunni
     }
   }
 
-  useEffect(() => { void load() }, [load])
+  useEffect(() => { void load(true) }, [load])
   useEffect(() => {
     if (!jobs.some((item) => item.status === 'RUNNING')) return
     const timer = window.setInterval(() => void load(), 1500)
     return () => window.clearInterval(timer)
   }, [jobs, load])
 
+  const visibleJobs = selectedDay ? jobs.filter((job) => runDay(job.created_at) === selectedDay) : jobs
+
   return <div className="strategy-history-page">
     <div className="strategy-history-heading">
       <div><span>BACKTEST ARCHIVE</span><h1>历史回测结果</h1><p>一行查看核心结果；点击详情查看完整配置，也可以清理不需要的记录。</p></div>
-      <button onClick={() => void load()} disabled={loading}>{loading ? '正在刷新…' : '刷新列表'}</button>
+      <div className="history-refresh"><button onClick={() => void load(true)} disabled={loading}>{loading ? '正在刷新…' : '刷新列表'}</button>{refreshedAt && <small>已刷新：{refreshedAt}</small>}</div>
+    </div>
+    <div className="history-date-filter">
+      <label>运行日期<input type="date" value={selectedDay} onChange={(event) => setSelectedDay(event.target.value)} /></label>
+      {selectedDay && <><span>显示 {visibleJobs.length} 条</span><button onClick={() => setSelectedDay('')}>查看全部</button></>}
     </div>
     {error && <div className="strategy-error"><b>读取失败</b><span>{error}</span><button onClick={() => setError('')}>×</button></div>}
-    {!loading && !error && jobs.length === 0 && <div className="history-empty"><b>还没有回测记录</b><span>启动回测后，任务会自动出现在这里。</span></div>}
-    {jobs.length > 0 && <div className="history-table">
-      <div className="history-table-head"><span>策略 / 时间</span><span>回测区间</span><span>累计收益</span><span>年化收益</span><span>最大回撤</span><span>夏普</span><span>状态</span><span /></div>
-      {jobs.map((job) => <div className={`history-table-item ${job.status.toLowerCase()}`} key={job.job_id}>
+    {!loading && !error && visibleJobs.length === 0 && <div className="history-empty"><b>{selectedDay ? '该日期没有回测记录' : '还没有回测记录'}</b><span>{selectedDay ? '换一个日期，或查看全部记录。' : '启动回测后，任务会自动出现在这里。'}</span></div>}
+    {visibleJobs.length > 0 && <div className="history-table">
+      <div className="history-table-head"><span>策略 / 时间</span><span>回测区间</span><span>股票池范围</span><span>调仓间隔</span><span>累计收益</span><span>年化收益</span><span>最大回撤</span><span>夏普</span><span>状态</span><span /></div>
+      {visibleJobs.map((job) => <div className={`history-table-item ${job.status.toLowerCase()}`} key={job.job_id}>
         <div className="history-main-row">
           <span className="history-name"><b>{cleanName(job.name)}</b><small>{job.strategy_type === 'ROTATION' ? '轮动回测 · ' : '因子策略 · '}{dateTime(job.created_at)}</small></span>
           <span>{job.request?.start || '—'}<small>至 {job.request?.end || '—'}</small></span>
+          <span className="history-universe-summary" title={universeScope(job.request)}>{universeScopeSummary(job.request)}<small>股票池范围</small></span>
+          <span className="history-rebalance-summary">{rebalanceIntervalSummary(job.request)}<small>调仓间隔</small></span>
           <strong>{percent(job.result_summary?.total_return)}</strong>
           <strong>{percent(job.result_summary?.annualized_return)}</strong>
           <strong>{percent(job.result_summary?.maximum_drawdown)}</strong>
