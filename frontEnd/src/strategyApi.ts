@@ -267,6 +267,9 @@ export interface StrategyResult {
     trade_count: number
     filled_trade_count: number
     rejection_counts: Record<string, number>
+    benchmark_total_return?: number
+    excess_return?: number
+    calmar?: number
   }
   annual: Array<{ year: number; return: number }>
   execution_model?: {
@@ -404,6 +407,9 @@ export interface StrategyJob {
   updated_at?: string
   request?: StrategyRequest | RotationRequest
   strategy_type?: 'FACTOR' | 'ROTATION'
+  experiment_kind?: 'SINGLE_FACTOR' | 'MULTI_FACTOR' | 'ROTATION'
+  single_factor?: ScoreRule | null
+  comparison_key?: string | null
   process_alive?: boolean
   elapsed_seconds?: number
   heartbeat_at?: string | null
@@ -440,7 +446,7 @@ export const strategyApi = {
   preflight: (payload: StrategyRequest) => request<StrategyPreflight>('/strategy/preflight', { method: 'POST', body: JSON.stringify(payload) }),
   preview: (payload: StrategyRequest, previewDate: string) => request<StrategyPreview>('/strategy/preview', { method: 'POST', body: JSON.stringify({ ...payload, preview_date: previewDate }) }),
   start: (payload: StrategyRequest) => request<StrategyJob>('/strategy/jobs', { method: 'POST', body: JSON.stringify(payload) }),
-  list: () => request<{ jobs: StrategyJobHistory[] }>('/strategy/jobs'),
+  list: (kind?: 'single-factor' | 'history') => request<{ jobs: StrategyJobHistory[] }>(`/strategy/jobs${kind ? `?kind=${kind}` : ''}`),
   status: (jobId: string) => request<StrategyJob>(`/strategy/jobs/${jobId}`),
   stop: (jobId: string) => request<StrategyJob>(`/strategy/jobs/${jobId}/stop`, { method: 'POST', body: '{}' }),
   delete: (jobId: string) => request<{ job_id: string; deleted: boolean }>(`/strategy/jobs/${jobId}`, { method: 'DELETE' }),

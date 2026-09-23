@@ -264,7 +264,7 @@ export default function StrategyBacktest() {
 
   const payload = useMemo<StrategyRequest>(() => ({
     name, start, end, universe_id: 'ALL-A-PIT', universe_segments: universeSegments, selection_sequence_mode: selectionSequenceMode,
-    score_rules: scoreRules, filter_rules: filterRules,
+    score_rules: scoreRules.length === 1 ? [{ ...scoreRules[0], weight: 100 }] : scoreRules, filter_rules: filterRules,
     exclude_st: excludeSt, exclude_abnormal_status: excludeAbnormalStatus,
     minimum_listed_sessions: listedSessions, target_count: targetCount,
     retention_rank: retentionRank, rebalance_sessions: rebalanceSessions, initial_cash_cny: initialCash,
@@ -321,7 +321,7 @@ export default function StrategyBacktest() {
       <section className="strategy-panel"><header><span>02</span><div><h2>因子综合打分</h2><p>先转换成当日百分位排名，再按权重合成。</p></div></header>{options && <div className="rule-list">{scoreRules.map((rule, index) => <div className="rule-row" key={`${rule.factor_id}-${index}`}>
         <FactorSelect options={options} value={rule.factor_id} onChange={(factor) => updateScore(index, { factor_id: factor.factor_id, release_id: factor.release_id, direction: factor.expected_direction })} />
         <select value={rule.direction} onChange={(e) => updateScore(index, { direction: e.target.value as 'HIGH' | 'LOW' })}><option value="HIGH">高值优先</option><option value="LOW">低值优先</option></select>
-        <label><input type="number" min="0.1" value={rule.weight} onChange={(e) => updateScore(index, { weight: Number(e.target.value) })} /><span>% 权重</span></label>
+        <label><input type="number" min="0.1" value={scoreRules.length === 1 ? 100 : rule.weight} disabled={scoreRules.length === 1} onChange={(e) => updateScore(index, { weight: Number(e.target.value) })} /><span>% 权重</span></label>
         <button onClick={() => setScoreRules((items) => items.filter((_, i) => i !== index))}>删除</button>
       </div>)}<button className="add-rule" onClick={addScore}>＋ 添加打分因子</button></div>}</section>
 

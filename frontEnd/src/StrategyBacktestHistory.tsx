@@ -198,7 +198,7 @@ function HistoryEquityChart({ result }: { result: NonNullable<StrategyJob['resul
   </section>
 }
 
-function Detail({ job }: { job: StrategyJob }) {
+export function StrategyHistoryDetail({ job }: { job: StrategyJob }) {
   const request = job.request
   const rotationRequest = request && 'candidates' in request ? request : null
   const factorRequest = request && 'score_rules' in request ? request : null
@@ -212,6 +212,8 @@ function Detail({ job }: { job: StrategyJob }) {
       <div className="history-universe"><dt>股票池范围</dt><dd title={universeScope(request)}>{universeScope(request)}</dd></div>
       {factorRequest && <div><dt>持股 / 保留排名</dt><dd>{factorRequest.target_count} / {factorRequest.retention_rank}</dd></div>}
       {factorRequest && <div><dt>调仓间隔</dt><dd>{factorRequest.rebalance_sessions} 个交易日</dd></div>}
+      {factorRequest && <div><dt>最低上市天数</dt><dd>{factorRequest.minimum_listed_sessions} 个交易日</dd></div>}
+      {factorRequest && <div><dt>排除 ST</dt><dd>{factorRequest.exclude_st ? '开启' : '关闭'}</dd></div>}
       {factorRequest && <div><dt>选股序列口径</dt><dd>{factorRequest.selection_sequence_mode === 'MODEL_TARGETS' ? '模型目标序列（实验共用）' : '实际持仓序列（原逻辑）'}</dd></div>}
       {factorRequest && <div><dt>PIT 异常状态退出</dt><dd>{factorRequest.exclude_abnormal_status === false ? '关闭' : '开启'}</dd></div>}
       {factorRequest && <div><dt>环境仓位方案</dt><dd>{factorRequest.shadow_health?.experiment_variant || 'S0'}</dd></div>}
@@ -220,8 +222,8 @@ function Detail({ job }: { job: StrategyJob }) {
       <div><dt>初始资金</dt><dd>¥{number(request?.initial_cash_cny, 0)}</dd></div>
       <div><dt>现金保留</dt><dd>{percent(rotationRequest?.allocation.minimum_cash_fraction ?? factorRequest?.minimum_cash_fraction)}</dd></div>
     </dl></section>
-    {factorRequest && <section><h3>评分因子</h3><div className="detail-rules">{factorRequest.score_rules.map((rule) => <div key={rule.factor_id}><b>{rule.factor_id}</b><span>{rule.direction === 'HIGH' ? '高值优先' : '低值优先'} · 权重 {number(rule.weight)}%</span></div>)}</div></section>}
-    {factorRequest && <section><h3>过滤规则</h3><div className="detail-rules">{factorRequest.filter_rules.length ? factorRequest.filter_rules.map((rule) => <div key={rule.factor_id}><b>{rule.factor_id}</b><span>{rule.mode === 'EXCLUDE_HIGH' ? '排除最高' : '排除最低'} {percent(rule.fraction)} · {rule.missing_policy === 'EXCLUDE' ? '缺失排除' : '缺失保留'}</span></div>) : <span className="detail-none">无过滤规则</span>}</div></section>}
+    {factorRequest && <section><h3>评分因子</h3><div className="detail-rules">{factorRequest.score_rules.map((rule) => <div key={rule.factor_id}><b>{rule.factor_id}</b><span>{rule.direction === 'HIGH' ? '高值优先' : '低值优先'} · 权重 {number(rule.weight)}% · {rule.transform}</span><code title={rule.release_id}>{rule.release_id}</code></div>)}</div></section>}
+    {factorRequest && <section><h3>过滤规则</h3><div className="detail-rules">{factorRequest.filter_rules.length ? factorRequest.filter_rules.map((rule) => <div key={rule.factor_id}><b>{rule.factor_id}</b><span>{rule.mode === 'EXCLUDE_HIGH' ? '排除最高' : '排除最低'} {percent(rule.fraction)} · {rule.missing_policy === 'EXCLUDE' ? '缺失排除' : '缺失保留'}</span><code title={rule.release_id}>{rule.release_id}</code></div>) : <span className="detail-none">无过滤规则</span>}</div></section>}
     {factorRequest?.shadow_health?.experiment_variant === 'S4V3' && <section><h3>市场与影子策略环境仓位</h3><dl>
       <div><dt>环境仓位方案</dt><dd>{factorRequest.shadow_health.experiment_variant}</dd></div>
       <div><dt>全A趋势 / 上涨比例回看</dt><dd>MA{factorRequest.shadow_health.external_trend_sessions} / {factorRequest.shadow_health.external_breadth_return_sessions}日</dd></div>
@@ -244,6 +246,9 @@ function Detail({ job }: { job: StrategyJob }) {
       <div><dt>卖出印花税</dt><dd>2023-08-28 前 10 bps，之后 {number(request?.sell_stamp_duty_bps)} bps</dd></div>
       <div><dt>过户费</dt><dd>买卖双向 {number(request?.transfer_fee_bps ?? 0.1)} bps</dd></div>
       <div><dt>基础滑点</dt><dd>{number(request?.base_slippage_bps)} bps</dd></div>
+      <div><dt>冲击成本系数</dt><dd>{number(request?.square_root_impact_bps)} bps</dd></div>
+      <div><dt>最大滑点</dt><dd>{number(request?.maximum_slippage_bps)} bps</dd></div>
+      <div><dt>最大成交参与率</dt><dd>{percent(request?.maximum_participation_rate)}</dd></div>
       <div><dt>期末净值</dt><dd>{number(result?.summary.ending_nav, 4)}</dd></div>
       <div><dt>总成本</dt><dd>¥{number(result?.summary.total_cost, 0)}</dd></div>
       <div><dt>卖出已实现盈亏（含分红）</dt><dd>¥{number(result?.summary.total_realized_pnl, 2)}</dd></div>
@@ -269,7 +274,7 @@ export default function StrategyBacktestHistory({ onOpenRunning }: { onOpenRunni
   const load = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true)
     try {
-      const response = await strategyApi.list()
+      const response = await strategyApi.list('history')
       const selectedJobs = selectedDay
         ? response.jobs.filter((job) => runDay(job.created_at) === selectedDay)
         : []
@@ -370,7 +375,7 @@ export default function StrategyBacktestHistory({ onOpenRunning }: { onOpenRunni
         </div>
         {job.status === 'RUNNING' && <div className="history-inline-progress"><i style={{ width: `${job.progress}%` }} /></div>}
         {expanded === job.job_id && <div className="history-detail-wrap">
-          {detailLoading === job.job_id ? <div className="history-detail-loading">正在读取详细结果…</div> : details[job.job_id] && <Detail job={details[job.job_id]} />}
+          {detailLoading === job.job_id ? <div className="history-detail-loading">正在读取详细结果…</div> : details[job.job_id] && <StrategyHistoryDetail job={details[job.job_id]} />}
           <div className="history-detail-actions">{job.status === 'RUNNING' ? <button onClick={() => onOpenRunning(job.strategy_type)}>返回运行控制台 →</button> : <a href={strategyApi.reportUrl(job.job_id)} target="_blank">打开原始 JSON 报告 →</a>}</div>
         </div>}
       </div>)}
