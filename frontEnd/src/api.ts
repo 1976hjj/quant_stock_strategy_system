@@ -1,4 +1,4 @@
-import type { FactorAssetResponse, FactorAssetStatus, FactorCatalogResponse, FactorComputePayload, FactorJobStatus, FactorSource, FactorStatus, JobStatus, M4Options, PreflightResult, RunPayload } from './types'
+import type { FactorAssetResponse, FactorAssetStatus, FactorBatchPayload, FactorBatchPlan, FactorBatchStatus, FactorCatalogResponse, FactorComputePayload, FactorJobStatus, FactorSource, FactorStatus, JobStatus, M4Options, PreflightResult, RunPayload } from './types'
 
 export const API_ROOT = (import.meta.env.VITE_M4_API_URL || 'http://127.0.0.1:8771/api/v1').replace(/\/$/, '')
 
@@ -21,6 +21,7 @@ export function factorAssets(params: {
   query?: string
   horizon?: number | ''
   status?: FactorAssetStatus
+  source?: FactorSource
 }) {
   const query = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {
@@ -62,5 +63,14 @@ export const api = {
   factorCalculationStatus: (jobId: string) => request<FactorJobStatus>(`/factors/jobs/${jobId}`),
   stopFactorCalculation: (jobId: string) =>
     request<FactorJobStatus>(`/factors/jobs/${jobId}/stop`, { method: 'POST', body: '{}' }),
+  preflightFactorBatch: (payload: FactorBatchPayload) =>
+    request<FactorBatchPlan>('/factors/batches/preflight', { method: 'POST', body: JSON.stringify(payload) }),
+  startFactorBatch: (payload: FactorBatchPayload) =>
+    request<FactorBatchStatus>('/factors/batches', { method: 'POST', body: JSON.stringify(payload) }),
+  latestFactorBatch: () => request<{ batch: FactorBatchStatus | null }>('/factors/batches/latest'),
+  factorBatchOptions: () => request<{ start: string | null; end: string | null }>('/factors/batches/options'),
+  factorBatchStatus: (batchId: string) => request<FactorBatchStatus>(`/factors/batches/${batchId}`),
+  stopFactorBatch: (batchId: string) => request<FactorBatchStatus>(`/factors/batches/${batchId}/stop`, { method: 'POST', body: '{}' }),
+  retryFactorBatch: (batchId: string) => request<FactorBatchStatus>(`/factors/batches/${batchId}/retry`, { method: 'POST', body: '{}' }),
   factorAssets,
 }

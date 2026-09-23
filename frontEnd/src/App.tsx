@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 import FactorAssetLibrary from './FactorAssetLibrary'
 import FactorLibrary from './FactorLibrary'
+import FactorBatchPanel from './FactorBatchPanel'
 import DataManager from './DataManager'
 import RotationBacktest from './RotationBacktest'
 import StrategyBacktest, { STRATEGY_JOB_EVENT, STRATEGY_JOB_STORAGE_KEY } from './StrategyBacktest'
@@ -87,6 +88,7 @@ export default function App() {
   const [view, setView] = useState<View>(savedView)
   const [factorStrategyRunning, setFactorStrategyRunning] = useState(false)
   const [rotationRunning, setRotationRunning] = useState(false)
+  const [batchCalculationRunning, setBatchCalculationRunning] = useState(false)
   const [options, setOptions] = useState<M4Options | null>(null)
   const [releaseId, setReleaseId] = useState('')
   const [stages, setStages] = useState<UiStageId[]>(DEFAULT_STAGES)
@@ -118,10 +120,16 @@ export default function App() {
   const [factorSubmitting, setFactorSubmitting] = useState(false)
   const [factorError, setFactorError] = useState('')
   const [catalogRefresh, setCatalogRefresh] = useState(0)
+  const [batchMode, setBatchMode] = useState(true)
+  const [batchSelected, setBatchSelected] = useState<Record<string, FactorCatalogItem>>({})
   const refreshedFactorStates = useRef(new Set<string>())
 
   const release = options?.factor_releases.find((item) => item.release_id === releaseId)
   const executionSelected = stages.includes('m4_6')
+  const factorCalculationRunning = batchCalculationRunning
+    || job?.status === 'RUNNING'
+    || factorJob?.status === 'RUNNING'
+    || factorJob?.accuracy_status === 'PENDING'
 
   useEffect(() => { window.localStorage.setItem(VIEW_STORAGE_KEY, view) }, [view])
 
@@ -139,6 +147,17 @@ export default function App() {
         else setLastJob(latest.job)
       })
       .catch((reason) => setError(`后端没有连上：${reason.message}`))
+  }, [])
+
+  useEffect(() => {
+    const refreshBatchState = () => {
+      api.latestFactorBatch()
+        .then(({ batch }) => setBatchCalculationRunning(batch?.status === 'RUNNING'))
+        .catch(() => setBatchCalculationRunning(false))
+    }
+    refreshBatchState()
+    const timer = window.setInterval(refreshBatchState, 3000)
+    return () => window.clearInterval(timer)
   }, [])
 
   useEffect(() => {
@@ -426,22 +445,32 @@ export default function App() {
     <main>
       <header className="topbar">
         <div className="brand"><span className="brand-mark">M4</span><div><b>因子研究台</b><small>FACTOR EVIDENCE WORKBENCH</small></div></div>
-        <nav className="main-nav"><button className={view === 'DATA' ? 'active' : ''} onClick={() => setView('DATA')}>数据管理</button><button className={view === 'CALCULATE' ? 'active' : ''} onClick={() => setView('CALCULATE')}>因子计算</button><button className={view === 'ASSETS' ? 'active' : ''} onClick={() => setView('ASSETS')}>因子资产库</button><button className={view === 'STRATEGY' ? 'active' : ''} onClick={() => setView('STRATEGY')}>因子策略{factorStrategyRunning && <i className="nav-running-dot" />}</button><button className={view === 'ROTATION' ? 'active' : ''} onClick={() => setView('ROTATION')}>轮动回测{rotationRunning && <i className="nav-running-dot" />}</button><button className={view === 'STRATEGY_HISTORY' ? 'active' : ''} onClick={() => setView('STRATEGY_HISTORY')}>历史回测结果</button></nav>
+        <nav className="main-nav"><button className={view === 'DATA' ? 'active' : ''} onClick={() => setView('DATA')}>数据管理</button><button className={view === 'CALCULATE' ? 'active' : ''} onClick={() => setView('CALCULATE')}>因子计算{factorCalculationRunning && <i className="nav-running-dot" />}</button><button className={view === 'ASSETS' ? 'active' : ''} onClick={() => setView('ASSETS')}>因子资产库</button><button className={view === 'STRATEGY' ? 'active' : ''} onClick={() => setView('STRATEGY')}>因子策略{factorStrategyRunning && <i className="nav-running-dot" />}</button><button className={view === 'ROTATION' ? 'active' : ''} onClick={() => setView('ROTATION')}>轮动回测{rotationRunning && <i className="nav-running-dot" />}</button><button className={view === 'STRATEGY_HISTORY' ? 'active' : ''} onClick={() => setView('STRATEGY_HISTORY')}>历史回测结果</button></nav>
         <div className={`api-state ${apiOnline ? 'online' : ''}`}><i />{apiOnline ? '计算后端已连接' : '计算后端未连接'}</div>
       </header>
 
       {error && <div className="error-banner"><b>没有继续执行</b><span>{error}</span><button onClick={() => setError('')}>×</button></div>}
 
       {view === 'DATA' ? <DataManager /> : view === 'STRATEGY' ? <StrategyBacktest /> : view === 'ROTATION' ? <RotationBacktest onOpenFactorCalculate={() => setView('CALCULATE')} onOpenHistory={() => setView('STRATEGY_HISTORY')} /> : view === 'STRATEGY_HISTORY' ? <StrategyBacktestHistory onOpenRunning={(strategyType) => setView(strategyType === 'ROTATION' ? 'ROTATION' : 'STRATEGY')} /> : view === 'CALCULATE' ? <>
-      <FactorLibrary selected={selectedFactor} onSelect={chooseFactor} refreshKey={catalogRefresh} />
+      <FactorLibrary selected={selectedFactor} onSelect={chooseFactor} refreshKey={catalogRefresh}
+        batchMode={batchMode} batchSelected={batchSelected} onBatchModeChange={setBatchMode}
+        onBatchToggle={(factor) => setBatchSelected((current) => {
+          const next = { ...current }
+          if (next[factor.factor_id]) delete next[factor.factor_id]
+          else next[factor.factor_id] = factor
+          return next
+        })}
+        onBatchAdd={(factors) => setBatchSelected((current) => ({ ...current, ...Object.fromEntries(factors.map((factor) => [factor.factor_id, factor])) }))}
+        onBatchClear={() => setBatchSelected({})} />
 
+      {batchMode ? <FactorBatchPanel selected={batchSelected} onFinished={() => setCatalogRefresh((value) => value + 1)} /> :
       <div className="workspace">
         <div className="configuration">
           <section className="panel release-panel">
             <div className="section-head"><span>01</span><div><h2>选择本次运行因子</h2><p>从上面的目录选一个因子。未计算的先生成数值，完成后直接进入 M4；每个新因子都有自己的独立版本。</p></div></div>
             {!selectedFactor && <div className="run-target-empty">请先在上面的因子卡片中点击“选择并计算这个因子”。</div>}
             {selectedFactor && <div className="run-target">
-              <div><span>{selectedFactor.source_collection === 'ALPHA158' ? 'ALPHA158' : selectedFactor.source_collection === 'JQDATA' ? 'JQDATA' : '现有因子'}</span><h3>{selectedFactor.chinese_name}</h3><code>{selectedFactor.external_name || selectedFactor.factor_id} · v{selectedFactor.factor_version}</code></div>
+              <div><span>{selectedFactor.source_collection === 'ALPHA158' ? 'ALPHA158' : selectedFactor.source_collection === 'JQDATA' ? 'JQDATA' : '自定义因子'}</span><h3>{selectedFactor.chinese_name}</h3><code>{selectedFactor.external_name || selectedFactor.factor_id} · v{selectedFactor.factor_version}</code></div>
               <b className={selectedFactor.accuracy_status === 'FAIL' ? 'failed' : selectedFactor.calculated ? 'ready' : ''}>{selectedFactor.status_label}</b>
             </div>}
             {selectedFactor && <div className="factor-compute-box">
@@ -541,7 +570,7 @@ export default function App() {
             </div>
           </details>}
         </aside>
-      </div>
+      </div>}
       </> : <FactorAssetLibrary />}
     </main>
   )

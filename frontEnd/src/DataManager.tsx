@@ -8,6 +8,7 @@ export default function DataManager() {
   const [inventory, setInventory] = useState<DataInventory | null>(null)
   const [selectedGroups, setSelectedGroups] = useState<string[]>([])
   const [selectedFactors, setSelectedFactors] = useState<string[]>([])
+  const [factorSource, setFactorSource] = useState<'ALL' | 'CURRENT' | 'ALPHA158' | 'JQDATA'>('ALL')
   const [target, setTarget] = useState('')
   const [workers, setWorkers] = useState(2)
   const [freeGb, setFreeGb] = useState(10)
@@ -64,6 +65,16 @@ export default function DataManager() {
     setter(values.includes(id) ? values.filter((item) => item !== id) : [...values, id])
     setPlan(null)
   }
+  const factorCounts = useMemo(() => ({
+    total: inventory?.factors.length ?? 0,
+    current: inventory?.factors.filter((item) => item.source === 'CURRENT').length ?? 0,
+    alpha158: inventory?.factors.filter((item) => item.source === 'ALPHA158').length ?? 0,
+    jqdata: inventory?.factors.filter((item) => item.source === 'JQDATA').length ?? 0,
+  }), [inventory])
+  const visibleFactors = useMemo(
+    () => inventory?.factors.filter((item) => factorSource === 'ALL' || item.source === factorSource) ?? [],
+    [inventory, factorSource],
+  )
   const prepare = async () => {
     setBusy(true); setError('')
     try { setPlan(await dataApi.plan(request)) }
@@ -86,8 +97,15 @@ export default function DataManager() {
           <div><label htmlFor={`data-${group.id}`} className="data-group-name"><b>{group.name}</b>{group.required_for_strategy && <em>策略必需</em>}{!group.published && <em className="pending">待发布</em>}</label><p>{group.description}</p><small>归档覆盖 {dateLabel(group.start)} → {dateLabel(group.end)}</small>{!!group.datasets.length && <details className="data-datasets"><summary>查看 {group.datasets.length} 项数据日期</summary><div>{group.datasets.map((item) => <span key={item.id}><b>{item.id}</b> {dateLabel(item.start)} → {dateLabel(item.end)} <i>{item.partitions.toLocaleString()} 分区</i></span>)}</div></details>}</div>
         </div>)}</div>
       </section>
-      {selectedGroups.includes('factors') && <section className="data-panel"><div className="data-section-title"><span>02</span><div><h2>选择要更新的因子</h2><p>默认选中当前小市值策略使用的两个因子。每个因子会发布到目标日期的新版本，旧版本保留以复核历史回测。</p></div></div>
-        <div className="data-factor-list">{inventory.factors.map((factor) => <label key={factor.id}><input type="checkbox" checked={selectedFactors.includes(factor.id)} disabled={job?.status === 'RUNNING'} onChange={() => toggle(factor.id, selectedFactors, setSelectedFactors)} /><b>{factor.name}</b><code>{factor.id}</code><small>{dateLabel(factor.start)} → {dateLabel(factor.end)}</small></label>)}</div>
+      {selectedGroups.includes('factors') && <section className="data-panel"><div className="data-section-title"><span>02</span><div><h2>选择要更新的因子</h2><p>默认选中当前小市值策略使用的两个因子。这里列出支持增量拉取的 JQData 因子；自定义因子和 Alpha158 请在“因子计算”页重算。</p></div></div>
+        <div className="data-factor-tabs">
+          <button className={factorSource === 'ALL' ? 'active' : ''} onClick={() => setFactorSource('ALL')}>全部 <span>{factorCounts.total}</span></button>
+          <button className={factorSource === 'CURRENT' ? 'active' : ''} onClick={() => setFactorSource('CURRENT')}>自定义因子 <span>{factorCounts.current}</span></button>
+          <button className={factorSource === 'ALPHA158' ? 'active' : ''} onClick={() => setFactorSource('ALPHA158')}>Alpha158 <span>{factorCounts.alpha158}</span></button>
+          <button className={factorSource === 'JQDATA' ? 'active' : ''} onClick={() => setFactorSource('JQDATA')}>JQDATA <span>{factorCounts.jqdata}</span></button>
+          <small>当前显示 {visibleFactors.length} 个 · 已选择 {selectedFactors.length} 个</small>
+        </div>
+        <div className="data-factor-list">{visibleFactors.map((factor) => <label key={factor.id}><input type="checkbox" checked={selectedFactors.includes(factor.id)} disabled={job?.status === 'RUNNING'} onChange={() => toggle(factor.id, selectedFactors, setSelectedFactors)} /><b>{factor.name}</b><code>{factor.id}</code><small>{dateLabel(factor.start)} → {dateLabel(factor.end)}</small></label>)}</div>
       </section>}
       <section className="data-panel"><div className="data-section-title"><span>03</span><div><h2>目标日期与运行参数</h2><p>结束日期包含当天；尚未发布的交易数据会在预检或拉取阶段明确提示。数据更新期间暂停启动新回测。</p></div></div>
         <div className="data-settings"><label>更新至<input type="date" max={inventory.latest_complete_day} value={target} disabled={job?.status === 'RUNNING'} onChange={(event) => { setTarget(event.target.value); setPlan(null) }} /></label><label>并发请求<input type="number" min="1" max="8" value={workers} disabled={job?.status === 'RUNNING'} onChange={(event) => setWorkers(Number(event.target.value))} /></label><label>磁盘安全下限 GiB<input type="number" min="1" max="500" value={freeGb} disabled={job?.status === 'RUNNING'} onChange={(event) => setFreeGb(Number(event.target.value))} /></label><label>请求间隔 ms<input type="number" min="0" max="5000" value={sleepMs} disabled={job?.status === 'RUNNING'} onChange={(event) => setSleepMs(Number(event.target.value))} /></label><label>刷新最近财报期<input type="number" min="0" max="4" value={refreshPeriods} disabled={job?.status === 'RUNNING'} onChange={(event) => setRefreshPeriods(Number(event.target.value))} /></label></div>

@@ -71,7 +71,7 @@ function factorById(options: StrategyOptions, factorId: string) {
 
 function FactorSelect({ options, value, onChange }: { options: StrategyOptions; value: string; onChange: (factor: StrategyFactorOption) => void }) {
   return <select value={value} onChange={(event) => { const factor = factorById(options, event.target.value); if (factor) onChange(factor) }}>
-    {options.factors.map((factor) => <option value={factor.factor_id} key={factor.factor_id}>{factor.chinese_name} · {factor.source_collection}</option>)}
+    {options.factors.map((factor) => <option value={factor.factor_id} key={factor.factor_id}>{factor.chinese_name} · {factor.source_collection === 'CURRENT' ? '自定义因子' : factor.source_collection}</option>)}
   </select>
 }
 

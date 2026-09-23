@@ -170,6 +170,80 @@ export interface FactorJobStatus {
   accuracy_status: 'PENDING' | 'PASS' | 'FAIL' | 'NOT_REQUIRED' | null
 }
 
+export interface FactorBatchPayload {
+  factors: Array<{ factor_id: string; factor_version: string }>
+  start: string
+  end: string
+  stages: UiStageId[]
+  holding_sessions: number
+  quantile_count: number
+  minimum_pairs_per_session: number
+  processed_variants: string[]
+  selection_quantile: number
+  capital_scenarios_cny: number[]
+  buy_commission_bps: number
+  sell_commission_bps: number
+  sell_stamp_duty_bps: number
+  base_slippage_bps: number
+  square_root_impact_bps: number
+  maximum_slippage_bps: number
+  maximum_participation_rate: number
+}
+
+export interface FactorBatchPlan {
+  status: 'READY'
+  start: string
+  end: string
+  count: number
+  items: Array<{ factor_id: string; name: string; coverage: { start: string; end: string } | null; action: string }>
+  requested_stages: UiStageId[]
+  resolved_stages: UiStageId[]
+  added_stages: UiStageId[]
+  estimated_pair_correlations: number
+  warnings: string[]
+}
+
+export interface FactorBatchStageProgress {
+  completed: number
+  total: number
+  current: string | null
+  current_label: string | null
+  detail: string | null
+  elapsed_seconds: number | null
+  steps: Array<{ id: string; label: string; status: 'PASS' | 'RUNNING' | 'WAITING' }>
+}
+
+export interface FactorBatchStatus {
+  batch_id: string
+  status: 'RUNNING' | 'PASS' | 'PARTIAL' | 'FAIL' | 'STOPPED'
+  phase: string
+  progress: number
+  completed: number
+  total: number
+  completed_steps?: number
+  total_steps?: number
+  elapsed_seconds?: number
+  activity?: { title: string; stage: string | null; detail: string | null; stage_progress: FactorBatchStageProgress | null } | null
+  request: FactorBatchPayload
+  items: Array<{
+    factor_id: string
+    name: string
+    status: 'WAITING' | 'RUNNING' | 'PASS' | 'FAIL'
+    phase: string
+    release_id: string | null
+    m4_job_id: string | null
+    error: string | null
+    progress?: number
+    factor_years?: { completed: number; total: number }
+    stage_progress?: FactorBatchStageProgress | null
+  }>
+  cohort_job_id: string | null
+  cohort_status: 'NOT_RUN' | 'RUNNING' | 'PASS' | 'FAIL' | 'SKIPPED'
+  cohort_stage_progress?: FactorBatchStageProgress | null
+  error: string | null
+  stop_requested: boolean
+}
+
 export type FactorAssetStatus = 'ALL' | 'TESTED' | 'RAW_ONLY' | 'WITH_EXECUTION'
 
 export interface FactorAssetVariant {
@@ -244,5 +318,5 @@ export interface FactorAssetResponse {
   pageSize: number
   totalItems: number
   totalPages: number
-  counts: { total: number; tested: number; raw_only: number; with_execution: number; runs: number }
+  counts: { total: number; tested: number; raw_only: number; with_execution: number; runs: number; current: number; alpha158: number; jqdata: number }
 }

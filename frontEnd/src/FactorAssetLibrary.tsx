@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, factorAssets } from './api'
-import type { FactorAssetItem, FactorAssetResponse, FactorAssetRun, FactorAssetStatus } from './types'
+import type { FactorAssetItem, FactorAssetResponse, FactorAssetRun, FactorAssetStatus, FactorSource } from './types'
 
 const STAGES = ['m4_1', 'm4_2', 'm4_3', 'm4_4', 'm4_5', 'm4_6'] as const
 
@@ -52,7 +52,7 @@ function AssetCard({ asset, onDeleted }: { asset: FactorAssetItem; onDeleted: ()
 
   return <article className="asset-card">
     <div className="asset-title-row">
-      <div><div className="asset-tags"><span>{asset.source_collection === 'ALPHA158' ? 'ALPHA158' : '现有因子'}</span><span>{asset.category}</span></div><h2>{asset.chinese_name}</h2><code>{asset.external_name || asset.factor_id} · v{asset.factor_version}</code></div>
+      <div><div className="asset-tags"><span>{asset.source_collection === 'ALPHA158' ? 'ALPHA158' : asset.source_collection === 'JQDATA' ? 'JQDATA' : '自定义因子'}</span><span>{asset.category}</span></div><h2>{asset.chinese_name}</h2><code>{asset.external_name || asset.factor_id} · v{asset.factor_version}</code></div>
       <div className="asset-overall-status"><b className={asset.m4_completed ? 'complete' : asset.tested_run_count ? 'partial' : 'raw'}>{asset.status_label}</b><span>{asset.run_count} 次运行 · {asset.horizons.length ? `${asset.horizons.join(' / ')} 日口径` : '尚未检验'}</span></div>
     </div>
 
@@ -97,6 +97,7 @@ export default function FactorAssetLibrary() {
   const [debounced, setDebounced] = useState('')
   const [horizon, setHorizon] = useState<number | ''>('')
   const [status, setStatus] = useState<FactorAssetStatus>('ALL')
+  const [source, setSource] = useState<FactorSource>('ALL')
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -107,16 +108,16 @@ export default function FactorAssetLibrary() {
     return () => window.clearTimeout(timer)
   }, [query])
 
-  useEffect(() => setPage(1), [debounced, horizon, status])
+  useEffect(() => setPage(1), [debounced, horizon, status, source])
 
   useEffect(() => {
     setLoading(true)
     setError('')
-    factorAssets({ page, pageSize: 10, query: debounced, horizon, status })
+    factorAssets({ page, pageSize: 10, query: debounced, horizon, status, source })
       .then(setData)
       .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)))
       .finally(() => setLoading(false))
-  }, [page, debounced, horizon, status, refreshKey])
+  }, [page, debounced, horizon, status, source, refreshKey])
 
   return <section className="asset-library">
     <div className="asset-heading">
@@ -127,6 +128,13 @@ export default function FactorAssetLibrary() {
         <div><strong>{data?.counts.raw_only ?? '—'}</strong><span>仅有 RAW</span></div>
         <div><strong>{data?.counts.runs ?? '—'}</strong><span>累计运行记录</span></div>
       </div>
+    </div>
+
+    <div className="asset-source-tabs source-tabs">
+      <button className={source === 'ALL' ? 'active' : ''} onClick={() => setSource('ALL')}>全部 <span>{data?.counts.total ?? 0}</span></button>
+      <button className={source === 'CURRENT' ? 'active' : ''} onClick={() => setSource('CURRENT')}>自定义因子 <span>{data?.counts.current ?? 0}</span></button>
+      <button className={source === 'ALPHA158' ? 'active' : ''} onClick={() => setSource('ALPHA158')}>Alpha158 <span>{data?.counts.alpha158 ?? 0}</span></button>
+      <button className={source === 'JQDATA' ? 'active' : ''} onClick={() => setSource('JQDATA')}>JQDATA <span>{data?.counts.jqdata ?? 0}</span></button>
     </div>
 
     <div className="asset-filters">

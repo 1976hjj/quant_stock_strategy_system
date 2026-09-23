@@ -38,7 +38,7 @@ function FactorSelect({ options, value, onChange }: { options: RotationOptions; 
     if (factor?.calculated && factor.release_id) onChange(factor)
   }}>
     {options.factors.map((factor) => <option key={factor.factor_id} value={factor.factor_id} disabled={!factor.calculated}>
-      {factor.chinese_name} · {factor.source_collection}{factor.calculated ? '' : '（需先计算）'}
+      {factor.chinese_name} · {factor.source_collection === 'CURRENT' ? '自定义因子' : factor.source_collection}{factor.calculated ? '' : '（需先计算）'}
     </option>)}
   </select>
 }
