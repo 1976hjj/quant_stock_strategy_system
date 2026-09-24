@@ -397,7 +397,7 @@ export interface StrategyYearTrades {
 
 export interface StrategyJob {
   job_id: string
-  status: 'RUNNING' | 'PASS' | 'FAIL' | 'STOPPED'
+  status: 'QUEUED' | 'RUNNING' | 'PASS' | 'FAIL' | 'STOPPED'
   phase: string
   progress: number
   name: string
@@ -411,6 +411,12 @@ export interface StrategyJob {
   single_factor?: ScoreRule | null
   comparison_key?: string | null
   process_alive?: boolean
+  queue_position?: number | null
+  jobs_ahead?: number | null
+  queued_at?: string | null
+  started_at?: string | null
+  finished_at?: string | null
+  error_message?: string | null
   elapsed_seconds?: number
   heartbeat_at?: string | null
   processed_sessions?: number | null
@@ -425,6 +431,15 @@ export interface StrategyJob {
 
 export interface StrategyJobHistory extends Omit<StrategyJob, 'log_tail' | 'result'> {
   result_summary: StrategyResult['summary'] | null
+}
+
+export interface StrategyQueue {
+  mode: 'SERIAL'
+  max_concurrency: 1
+  running_count: number
+  running_job_id: string | null
+  queued_count: number
+  queued_job_ids: string[]
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -446,6 +461,7 @@ export const strategyApi = {
   preflight: (payload: StrategyRequest) => request<StrategyPreflight>('/strategy/preflight', { method: 'POST', body: JSON.stringify(payload) }),
   preview: (payload: StrategyRequest, previewDate: string) => request<StrategyPreview>('/strategy/preview', { method: 'POST', body: JSON.stringify({ ...payload, preview_date: previewDate }) }),
   start: (payload: StrategyRequest) => request<StrategyJob>('/strategy/jobs', { method: 'POST', body: JSON.stringify(payload) }),
+  queue: () => request<StrategyQueue>('/strategy/queue'),
   list: (kind?: 'single-factor' | 'history') => request<{ jobs: StrategyJobHistory[] }>(`/strategy/jobs${kind ? `?kind=${kind}` : ''}`),
   status: (jobId: string) => request<StrategyJob>(`/strategy/jobs/${jobId}`),
   stop: (jobId: string) => request<StrategyJob>(`/strategy/jobs/${jobId}/stop`, { method: 'POST', body: '{}' }),

@@ -481,6 +481,10 @@ select:focus, input:focus { border-color: #4b946f; box-shadow: 0 0 0 3px rgba(20
 .strategy-progress-detail small { color: #789084; font-size: 7px; }
 .strategy-progress-detail b { overflow: hidden; color: #dce6df; font: 500 8px 'DM Mono'; text-overflow: ellipsis; white-space: nowrap; }
 .strategy-job code { display: block; margin-top: 7px; color: #7f9187; font: 7px 'DM Mono'; }
+.strategy-job.queued { padding: 10px; border: 1px solid #526b5d; border-radius: 8px; background: #203329; }
+.strategy-job.queued p { margin: 0 0 6px; color: #dce9e1; }
+.strategy-job.queued p span { color: #c2eb7d; font: 600 9px 'DM Mono'; }
+.strategy-queue-note { color: #9fb2a7; font-size: 8px; line-height: 1.5; }
 .strategy-job-ended { margin-top: 11px; padding: 10px; display: grid; gap: 4px; border: 1px solid #6c493f; border-radius: 8px; background: #2b211d; }
 .strategy-job-ended b { color: #f1b19d; font-size: 9px; }
 .strategy-job-ended span { color: #b7a299; font-size: 8px; line-height: 1.5; }
@@ -720,6 +724,8 @@ select:focus, input:focus { border-color: #4b946f; box-shadow: 0 0 0 3px rgba(20
 .history-status.invalid { color: #a24f3d !important; }
 .history-status.invalid i { background: #d56f55; }
 .history-table-item.running .history-status i { background: #36ad74; box-shadow: 0 0 0 3px #e4f4eb; animation: pulse 1.2s infinite; }
+.history-table-item.queued .history-status { color: #8a6921 !important; }
+.history-table-item.queued .history-status i { background: #d2a63c; box-shadow: 0 0 0 3px #f8efd7; }
 .history-table-item.fail .history-status, .history-table-item.stopped .history-status { color: #985541 !important; }
 .history-table-item.fail .history-status i, .history-table-item.stopped .history-status i { background: #d68165; }
 .history-row-actions { display: flex; gap: 5px; }
@@ -918,6 +924,8 @@ select:focus, input:focus { border-color: #4b946f; box-shadow: 0 0 0 3px rgba(20
 .rotation-job { display: grid; gap: 5px; margin-top: 10px; padding: 10px; border: 1px solid #345143; border-radius: 9px; color: #cbd8d0; font-size: 9px; }
 .rotation-job b { color: #c2eb7d; }
 .rotation-job button { min-height: 30px; border: 1px solid #547362; border-radius: 7px; background: transparent; color: #fff; cursor: pointer; }
+.rotation-job.queued { border-color: #8b7641; background: #302b1f; }
+.rotation-job.queued b { color: #f0ce70; }
 .rotation-preview { margin-top: 16px; }
 .rotation-preview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .rotation-preview-grid article { padding: 13px; border: 1px solid #dde3dc; border-radius: 11px; background: #f6f8f4; }

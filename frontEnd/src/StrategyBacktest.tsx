@@ -238,7 +238,9 @@ export default function StrategyBacktest() {
       setDraftRestored(true)
       const savedJobId = window.localStorage.getItem(STRATEGY_JOB_STORAGE_KEY)
       const recover = strategyApi.list().then(({ jobs }) => {
-        const selectedId = jobs.find((item) => item.status === 'RUNNING')?.job_id || savedJobId || jobs[0]?.job_id
+        const selectedId = jobs.find((item) => ['QUEUED', 'RUNNING'].includes(item.status) && item.strategy_type !== 'ROTATION')?.job_id
+          || savedJobId
+          || jobs.find((item) => item.strategy_type !== 'ROTATION')?.job_id
         return selectedId ? strategyApi.status(selectedId) : null
       }).catch(() => savedJobId ? strategyApi.status(savedJobId).catch(() => null) : null)
       void recover.then((savedJob) => {
@@ -257,7 +259,7 @@ export default function StrategyBacktest() {
   }, [job])
 
   useEffect(() => {
-    if (!job || job.status !== 'RUNNING') return
+    if (!job || !['QUEUED', 'RUNNING'].includes(job.status)) return
     const timer = window.setInterval(() => strategyApi.status(job.job_id).then(setJob).catch((reason) => setError(reason.message)), 1500)
     return () => window.clearInterval(timer)
   }, [job?.job_id, job?.status])
@@ -278,7 +280,7 @@ export default function StrategyBacktest() {
     if (draftRestored) window.localStorage.setItem(STRATEGY_DRAFT_STORAGE_KEY, JSON.stringify(payload))
   }, [draftRestored, payload])
 
-  const resetResults = () => { setPreflight(null); setPreview(null); if (job?.status !== 'RUNNING') setJob(null) }
+  const resetResults = () => { setPreflight(null); setPreview(null); if (!job || !['QUEUED', 'RUNNING'].includes(job.status)) setJob(null) }
   const updateScore = (index: number, patch: Partial<ScoreRule>) => { setScoreRules((items) => items.map((item, i) => i === index ? { ...item, ...patch } : item)); resetResults() }
   const updateFilter = (index: number, patch: Partial<FilterRule>) => { setFilterRules((items) => items.map((item, i) => i === index ? { ...item, ...patch } : item)); resetResults() }
   const addScore = () => { if (!options) return; const factor = options.factors.find((item) => !scoreRules.some((rule) => rule.factor_id === item.factor_id)); if (factor) setScoreRules([...scoreRules, { factor_id: factor.factor_id, release_id: factor.release_id, direction: factor.expected_direction, weight: 10, transform: 'PERCENTILE' }]) }
@@ -301,6 +303,7 @@ export default function StrategyBacktest() {
   }
 
   const result = job?.result
+  const activeJob = job && ['QUEUED', 'RUNNING'].includes(job.status)
   const summaryRequest = job?.request && 'score_rules' in job.request ? job.request : payload
   return <div className="strategy-page">
     <div className="strategy-heading"><div><span>STRATEGY BACKTEST</span><h1>通用策略回测</h1><p>从已发布因子出发，配置过滤、综合打分、持仓和交易规则，生成连续账户结果。</p></div><b className={online ? 'online' : ''}><i />{online ? '独立回测后端已连接' : '回测后端未连接'}</b></div>
@@ -370,10 +373,15 @@ export default function StrategyBacktest() {
     </div>
 
     <aside className="strategy-console"><span>RUN CONTROL</span><h2>预检与运行</h2><div className="strategy-summary"><p><span>打分因子</span><b>{summaryRequest.score_rules.length} 个</b></p><p><span>过滤规则</span><b>{summaryRequest.filter_rules.length} 条</b></p><p><span>目标持股</span><b>{summaryRequest.target_count} 只</b></p><p><span>环境仓位方案</span><b>{summaryRequest.shadow_health?.experiment_variant || 'S0'}</b></p><p><span>原持仓保留至</span><b>前 {summaryRequest.retention_rank} 名</b></p><p><span>区间</span><b>{summaryRequest.start}<br />至 {summaryRequest.end}</b></p></div>
-      <button disabled={busy || !scoreRules.length || job?.status === 'RUNNING'} onClick={() => runAction('preflight')}>一键预检</button>
-      <div className="preview-control"><input type="date" value={previewDate} onChange={(e) => setPreviewDate(e.target.value)} /><button disabled={busy || !scoreRules.length || job?.status === 'RUNNING'} onClick={() => runAction('preview')}>预览选股</button></div>
-      <button className="run-backtest" disabled={busy || !scoreRules.length || job?.status === 'RUNNING'} onClick={() => runAction('backtest')}>{job?.status === 'RUNNING' ? '正在回测…' : busy ? '正在创建回测任务…' : '开始策略回测'}</button>
+      <button disabled={busy || !scoreRules.length || Boolean(activeJob)} onClick={() => runAction('preflight')}>一键预检</button>
+      <div className="preview-control"><input type="date" value={previewDate} onChange={(e) => setPreviewDate(e.target.value)} /><button disabled={busy || !scoreRules.length || Boolean(activeJob)} onClick={() => runAction('preview')}>预览选股</button></div>
+      <button className="run-backtest" disabled={busy || !scoreRules.length} onClick={() => runAction('backtest')}>{busy ? '正在创建回测任务…' : activeJob ? '将当前配置加入等待队列' : '开始策略回测'}</button>
       {preflight && <div className="strategy-ready"><b>✓ 数据预检通过</b><span>{preflight.session_count} 个交易日 · 预计选股调仓 {preflight.estimated_rebalances} 次</span>{preflight.shadow_health?.data_check && <span>市场与影子策略环境仓位将在回测中滚动计算</span>}<small>共同范围 {preflight.common_range.start} → {preflight.common_range.end}</small></div>}
+      {job?.status === 'QUEUED' && <div className="strategy-job queued">
+        <p><b>等待队列中</b><span>第 {job.queue_position ?? '—'} 位</span></p>
+        <div className="strategy-queue-note">前面还有 {job.jobs_ahead ?? 0} 个任务；当前任务完成后将自动开始。</div>
+        <code>{job.job_id}</code>
+      </div>}
       {job?.status === 'RUNNING' && <div className="strategy-job">
         <p><b>{/^\?+$/.test(job.phase) ? '准备影子基线回测' : job.phase}</b><span>{job.progress}%</span></p>
         <i><em style={{ width: `${job.progress}%` }} /></i>
@@ -390,6 +398,7 @@ export default function StrategyBacktest() {
       </div>}
       {job?.status === 'STOPPED' && <div className="strategy-job-ended stopped"><b>本次回测已停止</b><span>未生成结果；旧进度已清除，可以调整参数后重新开始。</span><code>{job.job_id}</code></div>}
       {job?.status === 'FAIL' && <div className="strategy-job-ended failed"><b>本次回测失败</b><span>请查看运行日志或修改参数后重试。</span><code>{job.job_id}</code></div>}
+      {job?.status === 'QUEUED' && <button className="stop-strategy" onClick={() => strategyApi.stop(job.job_id).then(setJob)}>取消排队</button>}
       {job?.status === 'RUNNING' && <button className="stop-strategy" onClick={() => strategyApi.stop(job.job_id).then(setJob)}>停止回测</button>}
       {job?.status === 'PASS' && <a className="strategy-report" href={strategyApi.reportUrl(job.job_id)} target="_blank">打开 JSON 报告 ↗</a>}
     </aside></div>

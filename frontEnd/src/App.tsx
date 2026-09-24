@@ -166,13 +166,13 @@ export default function App() {
       const jobId = window.localStorage.getItem(STRATEGY_JOB_STORAGE_KEY)
       strategyApi.list()
         .then(({ jobs }) => {
-          setFactorStrategyRunning(jobs.some((item) => item.status === 'RUNNING' && item.strategy_type !== 'ROTATION'))
-          setRotationRunning(jobs.some((item) => item.status === 'RUNNING' && item.strategy_type === 'ROTATION'))
+          setFactorStrategyRunning(jobs.some((item) => ['QUEUED', 'RUNNING'].includes(item.status) && item.strategy_type !== 'ROTATION'))
+          setRotationRunning(jobs.some((item) => ['QUEUED', 'RUNNING'].includes(item.status) && item.strategy_type === 'ROTATION'))
         })
         .catch(() => jobId
           ? strategyApi.status(jobId).then((item) => {
-            setFactorStrategyRunning(item.status === 'RUNNING' && item.strategy_type !== 'ROTATION')
-            setRotationRunning(item.status === 'RUNNING' && item.strategy_type === 'ROTATION')
+            setFactorStrategyRunning(['QUEUED', 'RUNNING'].includes(item.status) && item.strategy_type !== 'ROTATION')
+            setRotationRunning(['QUEUED', 'RUNNING'].includes(item.status) && item.strategy_type === 'ROTATION')
           }).catch(() => {
             setFactorStrategyRunning(false)
             setRotationRunning(false)

@@ -9,7 +9,7 @@ const SEGMENT_NAMES: Record<UniverseSegment, string> = {
   SH_MAIN: '沪市主板', SZ_MAIN: '深市主板', CHINEXT: '创业板', STAR: '科创板', BSE: '北交所',
 }
 const STATUS_NAMES: Record<StrategyJobHistory['status'], string> = {
-  RUNNING: '回测中', PASS: '已完成', FAIL: '失败', STOPPED: '已停止',
+  QUEUED: '等待队列中', RUNNING: '回测中', PASS: '已完成', FAIL: '失败', STOPPED: '已停止',
 }
 
 function pct(value: number | null | undefined) {
@@ -148,7 +148,7 @@ export default function SingleFactorReports({ onOpenRunning }: { onOpenRunning: 
 
   useEffect(() => { void load(true) }, [load])
   useEffect(() => {
-    if (!jobs.some((item) => item.status === 'RUNNING')) return
+    if (!jobs.some((item) => ['QUEUED', 'RUNNING'].includes(item.status))) return
     const timer = window.setInterval(() => void load(), 1500)
     return () => window.clearInterval(timer)
   }, [jobs, load])
@@ -202,11 +202,20 @@ export default function SingleFactorReports({ onOpenRunning }: { onOpenRunning: 
   }
 
   const deleteJob = async (job: StrategyJobHistory) => {
-    if (job.status === 'RUNNING' || !window.confirm(`确定删除“${factors.get(factorId(job))?.chinese_name || job.name}”的这次单因子回测吗？`)) return
+    if (['QUEUED', 'RUNNING'].includes(job.status) || !window.confirm(`确定删除“${factors.get(factorId(job))?.chinese_name || job.name}”的这次单因子回测吗？`)) return
     try {
       await strategyApi.delete(job.job_id)
       setJobs((current) => current.filter((item) => item.job_id !== job.job_id))
       setSelected((current) => current.filter((id) => id !== job.job_id))
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason))
+    }
+  }
+
+  const cancelJob = async (job: StrategyJobHistory) => {
+    try {
+      await strategyApi.stop(job.job_id)
+      await load()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     }
@@ -223,7 +232,7 @@ export default function SingleFactorReports({ onOpenRunning }: { onOpenRunning: 
       <div className="history-refresh"><button onClick={() => void load(true)} disabled={loading}>{loading ? '正在刷新…' : '刷新列表'}</button>{refreshedAt && <small>已刷新：{refreshedAt}</small>}</div>
     </div>
     <div className="single-summary">
-      <div><b>{testedFactors}</b><span>已测试因子</span></div><div><b>{completed.length}</b><span>完成的回测</span></div><div><b>{jobs.filter((job) => job.status === 'RUNNING').length}</b><span>正在运行</span></div><div><b>{best ? factors.get(factorId(best))?.chinese_name || factorId(best) : '—'}</b><span>当前最高夏普 {best?.result_summary?.sharpe?.toFixed(2) ?? '—'}</span></div>
+      <div><b>{testedFactors}</b><span>已测试因子</span></div><div><b>{completed.length}</b><span>完成的回测</span></div><div><b>{jobs.filter((job) => ['QUEUED', 'RUNNING'].includes(job.status)).length}</b><span>运行 / 等待</span></div><div><b>{best ? factors.get(factorId(best))?.chinese_name || factorId(best) : '—'}</b><span>当前最高夏普 {best?.result_summary?.sharpe?.toFixed(2) ?? '—'}</span></div>
     </div>
     <div className="single-filters">
       <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索因子名称、编号或策略名称" />
@@ -246,11 +255,11 @@ export default function SingleFactorReports({ onOpenRunning }: { onOpenRunning: 
           <span className="history-universe-summary" title={universe(job)}>{universe(job)}<small>股票池范围</small></span>
           <span className="history-rebalance-summary">{job.request && 'rebalance_sessions' in job.request ? `${job.request.rebalance_sessions}日` : '—'}<small>{job.request && 'shadow_health' in job.request ? job.request.shadow_health?.experiment_variant || 'S0' : 'S0'}</small></span>
           <strong>{pct(job.result_summary?.total_return)}</strong><strong>{pct(job.result_summary?.excess_return)}</strong><strong>{pct(job.result_summary?.maximum_drawdown)}</strong><strong>{job.result_summary?.sharpe?.toFixed(2) ?? '—'}</strong>
-          <span className="history-status"><i />{job.status === 'RUNNING' ? `${job.phase} ${job.progress}%` : STATUS_NAMES[job.status]}</span>
-          <span className="history-row-actions"><button className="history-detail-button" onClick={() => void toggleDetail(job.job_id)}>{expanded === job.job_id ? '收起' : '详情'}</button><button className="history-delete-button" disabled={job.status === 'RUNNING'} onClick={() => void deleteJob(job)}>删除</button></span>
+          <span className="history-status"><i />{job.status === 'RUNNING' ? `${job.phase} ${job.progress}%` : job.status === 'QUEUED' ? `等待中 · 第 ${job.queue_position ?? '—'} 位` : STATUS_NAMES[job.status]}</span>
+          <span className="history-row-actions"><button className="history-detail-button" onClick={() => void toggleDetail(job.job_id)}>{expanded === job.job_id ? '收起' : '详情'}</button>{job.status === 'QUEUED' ? <button className="history-delete-button" onClick={() => void cancelJob(job)}>取消排队</button> : <button className="history-delete-button" disabled={job.status === 'RUNNING'} onClick={() => void deleteJob(job)}>删除</button>}</span>
         </div>
         {job.status === 'RUNNING' && <div className="history-inline-progress"><i style={{ width: `${job.progress}%` }} /></div>}
-        {expanded === job.job_id && <div className="history-detail-wrap">{detailLoading === job.job_id ? <div className="history-detail-loading">正在读取详细结果…</div> : details[job.job_id] && <><PerformanceOverview job={details[job.job_id]} /><FactorEvidence run={evidence[job.job_id]} /><StrategyHistoryDetail job={details[job.job_id]} /></>}<div className="history-detail-actions">{job.status === 'RUNNING' ? <button onClick={onOpenRunning}>返回运行控制台 →</button> : <a href={strategyApi.reportUrl(job.job_id)} target="_blank">打开原始 JSON 报告 →</a>}</div></div>}
+        {expanded === job.job_id && <div className="history-detail-wrap">{detailLoading === job.job_id ? <div className="history-detail-loading">正在读取详细结果…</div> : details[job.job_id] && <><PerformanceOverview job={details[job.job_id]} /><FactorEvidence run={evidence[job.job_id]} /><StrategyHistoryDetail job={details[job.job_id]} /></>}<div className="history-detail-actions">{['QUEUED', 'RUNNING'].includes(job.status) ? <button onClick={onOpenRunning}>返回运行控制台 →</button> : job.status === 'PASS' ? <a href={strategyApi.reportUrl(job.job_id)} target="_blank">打开原始 JSON 报告 →</a> : null}</div></div>}
       </div> })}
     </div>}
   </div>

@@ -70,7 +70,7 @@ function displayedCostPrice(trade: StrategyTrade) {
 }
 
 const STATUS_LABEL: Record<StrategyJobHistory['status'], string> = {
-  RUNNING: '回测中', PASS: '已完成', FAIL: '失败', STOPPED: '已停止',
+  QUEUED: '等待队列中', RUNNING: '回测中', PASS: '已完成', FAIL: '失败', STOPPED: '已停止',
 }
 
 function YearlyTransactions({ jobId, annual, available }: { jobId: string; annual: Array<{ year: number; return: number }>; available: boolean }) {
@@ -322,7 +322,7 @@ export default function StrategyBacktestHistory({ onOpenRunning }: { onOpenRunni
   }
 
   const deleteJob = async (job: StrategyJobHistory) => {
-    if (job.status === 'RUNNING') return
+    if (['QUEUED', 'RUNNING'].includes(job.status)) return
     if (!window.confirm(`确定删除“${cleanName(job.name)}”吗？\n\n任务 ${job.job_id} 的配置、日志和结果文件都会被永久删除。`)) return
     setDeleting(job.job_id)
     setError('')
@@ -338,9 +338,19 @@ export default function StrategyBacktestHistory({ onOpenRunning }: { onOpenRunni
     }
   }
 
+  const cancelJob = async (job: StrategyJobHistory) => {
+    setError('')
+    try {
+      await strategyApi.stop(job.job_id)
+      await load()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason))
+    }
+  }
+
   useEffect(() => { void load(true) }, [load])
   useEffect(() => {
-    if (!jobs.some((item) => item.status === 'RUNNING')) return
+    if (!jobs.some((item) => ['QUEUED', 'RUNNING'].includes(item.status))) return
     const timer = window.setInterval(() => void load(), 1500)
     return () => window.clearInterval(timer)
   }, [jobs, load])
@@ -370,13 +380,13 @@ export default function StrategyBacktestHistory({ onOpenRunning }: { onOpenRunni
           <strong>{percent(job.result_summary?.annualized_return)}</strong>
           <strong>{percent(job.result_summary?.maximum_drawdown)}</strong>
           <strong>{job.result_summary?.sharpe?.toFixed(2) ?? '—'}</strong>
-          <span className={`history-status ${job.status === 'PASS' && !job.execution_model_valid ? 'invalid' : ''}`}><i />{job.status === 'RUNNING' ? `${job.phase} ${job.progress}%` : job.status === 'PASS' && !job.execution_model_valid ? '旧模型失效' : STATUS_LABEL[job.status]}</span>
-          <span className="history-row-actions"><button className="history-detail-button" onClick={() => void toggleDetail(job.job_id)}>{expanded === job.job_id ? '收起' : '详情'}</button><button className="history-delete-button" disabled={job.status === 'RUNNING' || deleting === job.job_id} title={job.status === 'RUNNING' ? '运行中的任务不能删除' : '删除这条回测记录'} onClick={() => void deleteJob(job)}>{deleting === job.job_id ? '…' : '删除'}</button></span>
+          <span className={`history-status ${job.status === 'PASS' && !job.execution_model_valid ? 'invalid' : ''}`}><i />{job.status === 'RUNNING' ? `${job.phase} ${job.progress}%` : job.status === 'QUEUED' ? `等待中 · 第 ${job.queue_position ?? '—'} 位` : job.status === 'PASS' && !job.execution_model_valid ? '旧模型失效' : STATUS_LABEL[job.status]}</span>
+          <span className="history-row-actions"><button className="history-detail-button" onClick={() => void toggleDetail(job.job_id)}>{expanded === job.job_id ? '收起' : '详情'}</button>{job.status === 'QUEUED' ? <button className="history-delete-button" onClick={() => void cancelJob(job)}>取消排队</button> : <button className="history-delete-button" disabled={job.status === 'RUNNING' || deleting === job.job_id} title={job.status === 'RUNNING' ? '运行中的任务不能删除' : '删除这条回测记录'} onClick={() => void deleteJob(job)}>{deleting === job.job_id ? '…' : '删除'}</button>}</span>
         </div>
         {job.status === 'RUNNING' && <div className="history-inline-progress"><i style={{ width: `${job.progress}%` }} /></div>}
         {expanded === job.job_id && <div className="history-detail-wrap">
           {detailLoading === job.job_id ? <div className="history-detail-loading">正在读取详细结果…</div> : details[job.job_id] && <StrategyHistoryDetail job={details[job.job_id]} />}
-          <div className="history-detail-actions">{job.status === 'RUNNING' ? <button onClick={() => onOpenRunning(job.strategy_type)}>返回运行控制台 →</button> : <a href={strategyApi.reportUrl(job.job_id)} target="_blank">打开原始 JSON 报告 →</a>}</div>
+          <div className="history-detail-actions">{['QUEUED', 'RUNNING'].includes(job.status) ? <button onClick={() => onOpenRunning(job.strategy_type)}>返回运行控制台 →</button> : job.status === 'PASS' ? <a href={strategyApi.reportUrl(job.job_id)} target="_blank">打开原始 JSON 报告 →</a> : null}</div>
         </div>}
       </div>)}
     </div>}
