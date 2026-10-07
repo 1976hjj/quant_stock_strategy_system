@@ -104,9 +104,9 @@ main { min-height: 100vh; background: radial-gradient(circle at 82% 0%, rgba(199
 .status-accuracy_failed .factor-status i { background: #c75b45; }
 .factor-card h3 { margin: 12px 0 3px; font-size: 14px; }
 .factor-card > code { display: block; overflow: hidden; color: #849089; font: 9px 'DM Mono'; text-overflow: ellipsis; white-space: nowrap; }
-.factor-coverage { display: flex; align-items: center; gap: 6px; margin-top: 8px; color: #66746c; font-size: 9px; }
-.factor-coverage span { flex: none; padding: 3px 6px; border-radius: 4px; background: #edf3ee; color: #5a7566; font-size: 8px; }
-.factor-coverage b { overflow: hidden; color: #3f5c4c; font: 500 9px 'DM Mono'; text-overflow: ellipsis; white-space: nowrap; }
+.factor-coverage { display: flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%; margin-top: 8px; padding: 4px 7px; border: 1px solid #c4ddcc; border-radius: 6px; background: #eaf5ed; color: #205337; font-size: 9px; }
+.factor-coverage span { flex: none; padding: 3px 6px; border-radius: 4px; background: #cfe7d6; color: #194b30; font-size: 8px; font-weight: 700; }
+.factor-coverage b { min-width: 0; overflow: hidden; color: #194b30; font: 700 9px 'DM Mono'; text-overflow: ellipsis; white-space: nowrap; }
 .factor-card > p { min-height: 36px; margin: 10px 0; color: #647069; font-size: 10px; line-height: 1.55; }
 .accuracy-failure { margin: 0 0 9px; padding: 8px; border-radius: 7px; background: #fde9e3; color: #9b3f2f; font-size: 9px; line-height: 1.45; }
 @keyframes status-pulse { from { opacity: .45; } to { opacity: 1; } }
@@ -132,6 +132,10 @@ main { min-height: 100vh; background: radial-gradient(circle at 82% 0%, rgba(199
 .pagination { padding-top: 20px; display: flex; align-items: center; justify-content: center; gap: 18px; }
 .pagination button { padding: 8px 12px; border: 1px solid #d4d9d3; border-radius: 8px; background: #fff; color: #4f5b54; font-size: 10px; }
 .pagination span { color: #77817b; font: 10px 'DM Mono'; }
+.pagination-jump { display: flex; align-items: center; gap: 10px; }
+.pagination-jump label { display: flex; align-items: center; gap: 6px; color: #77817b; font: 10px 'DM Mono'; }
+.pagination-jump input { width: 48px; padding: 7px 4px; border: 1px solid #c4d2c8; border-radius: 6px; background: #fff; color: #194b30; font: 700 11px 'DM Mono'; text-align: center; }
+.pagination-jump input:focus { outline: 2px solid #87b89a; outline-offset: 2px; }
 
 .workspace { max-width: 1440px; margin: auto; padding: 0 24px 60px; display: grid; grid-template-columns: minmax(0, 1fr) 300px; align-items: start; gap: 16px; }
 .configuration { display: grid; gap: 12px; }

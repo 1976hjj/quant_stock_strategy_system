@@ -12,7 +12,7 @@ const STAGES: Array<{ id: UiStageId; title: string; text: string }> = [
   { id: 'm4_6', title: '真实能不能成交', text: '成本、冲击与容量' },
 ]
 const STORAGE_KEY = 'alpha-research.factor-batch-id'
-const DEFAULT_STAGES: UiStageId[] = ['m4_1', 'm4_2', 'm4_3', 'm4_4', 'm4_5']
+const DEFAULT_STAGES: UiStageId[] = ['m4_1', 'm4_2']
 
 export default function FactorBatchPanel({ selected, onFinished }: {
   selected: Record<string, FactorCatalogItem>

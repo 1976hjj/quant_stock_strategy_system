@@ -43,7 +43,7 @@ const PIPELINE_NAMES: Record<string, string> = {
   audit_factor_explorer: '4.7 页面审计',
 }
 
-const DEFAULT_STAGES: UiStageId[] = ['m4_1', 'm4_2', 'm4_3', 'm4_4', 'm4_5']
+const DEFAULT_STAGES: UiStageId[] = ['m4_1', 'm4_2']
 type View = 'CALCULATE' | 'ASSETS' | 'STRATEGY' | 'ROTATION' | 'SINGLE_FACTOR_REPORTS' | 'STRATEGY_HISTORY' | 'DATA'
 const VIEW_STORAGE_KEY = 'alpha-research.current-view'
 const FACTOR_JOB_STORAGE_KEY = 'alpha-research.factor-job-id'

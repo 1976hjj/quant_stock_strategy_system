@@ -1,8 +1,38 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from './api'
 import type { FactorCatalogItem, FactorCatalogResponse, FactorCategory, FactorSource, FactorStatus } from './types'
 
 const CATEGORIES: Array<'全部' | FactorCategory> = ['全部', '动量', '波动', '流动性', '质量', '估值', '风格', '量价', '形态']
+const SOURCES: FactorSource[] = ['ALL', 'CURRENT', 'ALPHA158', 'JQDATA']
+const CATEGORY_STORAGE_KEY = 'alpha-research.factor-catalog.category'
+const SOURCE_STORAGE_KEY = 'alpha-research.factor-catalog.source'
+const PAGE_STORAGE_KEY = 'alpha-research.factor-catalog.page'
+
+function savedPage(): number {
+  try {
+    const value = Number(window.localStorage.getItem(PAGE_STORAGE_KEY))
+    return Number.isSafeInteger(value) && value > 0 ? value : 1
+  } catch {
+    return 1
+  }
+}
+
+function savedSelection<T extends string>(key: string, options: readonly T[], fallback: T): T {
+  try {
+    const value = window.localStorage.getItem(key)
+    return options.find((option) => option === value) ?? fallback
+  } catch {
+    return fallback
+  }
+}
+
+function saveSelection(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value)
+  } catch {
+    // Keep filters usable when browser storage is unavailable.
+  }
+}
 
 function decimal(value: number | null, digits = 3) {
   return value === null ? '—' : value.toFixed(digits)
@@ -24,15 +54,25 @@ export default function FactorLibrary({ selected, onSelect, refreshKey = 0, batc
   onBatchClear: () => void
 }) {
   const [data, setData] = useState<FactorCatalogResponse | null>(null)
-  const [category, setCategory] = useState<'全部' | FactorCategory>('全部')
-  const [source, setSource] = useState<FactorSource>('ALL')
+  const [category, setCategory] = useState<'全部' | FactorCategory>(() => savedSelection(CATEGORY_STORAGE_KEY, CATEGORIES, '全部'))
+  const [source, setSource] = useState<FactorSource>(() => savedSelection(SOURCE_STORAGE_KEY, SOURCES, 'ALL'))
   const [status, setStatus] = useState<FactorStatus>('ALL')
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [page, setPage] = useState(1)
+  const [page, setPage] = useState(savedPage)
+  const [pageInput, setPageInput] = useState(() => String(page))
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [addingFiltered, setAddingFiltered] = useState(false)
+  const filtersKey = JSON.stringify([category, source, status, debouncedSearch])
+  const previousFilters = useRef(filtersKey)
+
+  useEffect(() => { saveSelection(CATEGORY_STORAGE_KEY, category) }, [category])
+  useEffect(() => { saveSelection(SOURCE_STORAGE_KEY, source) }, [source])
+  useEffect(() => {
+    saveSelection(PAGE_STORAGE_KEY, String(page))
+    setPageInput(String(page))
+  }, [page])
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedSearch(search), 220)
@@ -40,21 +80,40 @@ export default function FactorLibrary({ selected, onSelect, refreshKey = 0, batc
   }, [search])
 
   useEffect(() => {
-    setPage(1)
-  }, [category, source, status, debouncedSearch])
-
-  useEffect(() => {
+    const filtersChanged = previousFilters.current !== filtersKey
+    previousFilters.current = filtersKey
+    const requestedPage = filtersChanged ? 1 : page
+    if (filtersChanged) setPage(1)
     let active = true
     setLoading(true)
     setError('')
-    api.factorCatalog({ page, pageSize: 24, query: debouncedSearch, category, source, status })
-      .then((next) => { if (active) setData(next) })
+    api.factorCatalog({ page: requestedPage, pageSize: 24, query: debouncedSearch, category, source, status })
+      .then((next) => {
+        if (!active) return
+        const lastPage = Math.max(1, next.totalPages)
+        if (requestedPage > lastPage) {
+          setPage(lastPage)
+          return
+        }
+        setData(next)
+      })
       .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : String(reason)) })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [category, source, status, debouncedSearch, page, refreshKey])
+  }, [category, source, status, debouncedSearch, filtersKey, page, refreshKey])
 
   const counts = data?.counts
+
+  const jumpToPage = () => {
+    const value = Number(pageInput)
+    if (!pageInput.trim() || !Number.isSafeInteger(value)) {
+      setPageInput(String(page))
+      return
+    }
+    const nextPage = Math.min(Math.max(1, value), Math.max(1, data?.totalPages ?? 1))
+    setPage(nextPage)
+    setPageInput(String(nextPage))
+  }
 
   const addFiltered = async () => {
     if (!data?.totalItems) return
@@ -181,9 +240,13 @@ export default function FactorLibrary({ selected, onSelect, refreshKey = 0, batc
       </div>}
 
       {data && data.totalPages > 1 && <div className="pagination">
-        <button disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>← 上一页</button>
-        <span>第 {page} / {data.totalPages} 页</span>
-        <button disabled={page >= data.totalPages} onClick={() => setPage((value) => value + 1)}>下一页 →</button>
+        <button disabled={loading || page <= 1} onClick={() => setPage((value) => value - 1)}>← 上一页</button>
+        <form className="pagination-jump" onSubmit={(event) => { event.preventDefault(); jumpToPage() }}>
+          <label>第 <input aria-label="跳转页码" type="text" inputMode="numeric" value={pageInput} disabled={loading}
+            onChange={(event) => setPageInput(event.target.value)} /> / {data.totalPages} 页</label>
+          <button type="submit" disabled={loading}>跳转</button>
+        </form>
+        <button disabled={loading || page >= data.totalPages} onClick={() => setPage((value) => value + 1)}>下一页 →</button>
       </div>}
     </section>
   )
