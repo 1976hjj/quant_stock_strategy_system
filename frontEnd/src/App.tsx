@@ -298,6 +298,12 @@ export default function App() {
       return
     }
     setSelectedFactor(factor)
+    if (factor.source_collection === 'BANK') {
+      setHolding(63)
+      setQuantiles(3)
+      setMinimumPairs(10)
+      setVariants(['WINSORIZED_ZSCORE'])
+    }
     setFactorJob(null)
     window.localStorage.removeItem(FACTOR_JOB_STORAGE_KEY)
     setFactorError('')
@@ -471,7 +477,7 @@ export default function App() {
             <div className="section-head"><span>01</span><div><h2>选择本次运行因子</h2><p>从上面的目录选一个因子。未计算的先生成数值，完成后直接进入 M4；每个新因子都有自己的独立版本。</p></div></div>
             {!selectedFactor && <div className="run-target-empty">请先在上面的因子卡片中点击“选择并计算这个因子”。</div>}
             {selectedFactor && <div className="run-target">
-              <div><span>{selectedFactor.source_collection === 'ALPHA158' ? 'ALPHA158' : selectedFactor.source_collection === 'JQDATA' ? 'JQDATA' : '自定义因子'}</span><h3>{selectedFactor.chinese_name}</h3><code>{selectedFactor.external_name || selectedFactor.factor_id} · v{selectedFactor.factor_version}</code></div>
+              <div><span>{selectedFactor.source_collection === 'ALPHA158' ? 'ALPHA158' : selectedFactor.source_collection === 'JQDATA' ? 'JQDATA' : selectedFactor.source_collection === 'BANK' ? '银行因子' : '自定义因子'}</span><h3>{selectedFactor.chinese_name}</h3><code>{selectedFactor.external_name || selectedFactor.factor_id} · v{selectedFactor.factor_version}</code></div>
               <b className={selectedFactor.accuracy_status === 'FAIL' ? 'failed' : selectedFactor.calculated ? 'ready' : ''}>{selectedFactor.status_label}</b>
             </div>}
             {selectedFactor && <div className="factor-compute-box">
@@ -512,7 +518,7 @@ export default function App() {
           <section className="panel">
             <div className="section-head"><span>03</span><div><h2>设置检验口径</h2><p>这些值会写进证据身份，不同参数不会混成同一个结果。</p></div></div>
             <div className="param-grid">
-              <Field label="持仓期"><div className="segmented">{[5, 10, 20, 30].map((value) => <button className={holding === value ? 'active' : ''} onClick={() => { setHolding(value); setPreflight(null) }} key={value}>{value} 日</button>)}</div></Field>
+              <Field label="持仓期"><div className="segmented">{[5, 10, 20, 30, 63, 126].map((value) => <button className={holding === value ? 'active' : ''} onClick={() => { setHolding(value); setPreflight(null) }} key={value}>{value} 日</button>)}</div></Field>
               <Field label="收益分组数" hint="例如 5 = 五分位"><input type="number" min="2" max="20" value={quantiles} onChange={(event) => setQuantiles(Number(event.target.value))} /></Field>
               <Field label="每日最少有效样本" hint="样本不足的日期不计入"><input type="number" min="3" value={minimumPairs} onChange={(event) => setMinimumPairs(Number(event.target.value))} /></Field>
               <Field label="4.6 选股比例" hint="按因子方向选头部/尾部"><div className="suffix-input"><input type="number" min="1" max="99" value={selectionPercent} onChange={(event) => setSelectionPercent(Number(event.target.value))} /><span>%</span></div></Field>

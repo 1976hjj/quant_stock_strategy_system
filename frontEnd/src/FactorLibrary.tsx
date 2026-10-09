@@ -3,7 +3,7 @@ import { api } from './api'
 import type { FactorCatalogItem, FactorCatalogResponse, FactorCategory, FactorSource, FactorStatus } from './types'
 
 const CATEGORIES: Array<'全部' | FactorCategory> = ['全部', '动量', '波动', '流动性', '质量', '估值', '风格', '量价', '形态']
-const SOURCES: FactorSource[] = ['ALL', 'CURRENT', 'ALPHA158', 'JQDATA']
+const SOURCES: FactorSource[] = ['ALL', 'CURRENT', 'ALPHA158', 'JQDATA', 'BANK']
 const CATEGORY_STORAGE_KEY = 'alpha-research.factor-catalog.category'
 const SOURCE_STORAGE_KEY = 'alpha-research.factor-catalog.source'
 const PAGE_STORAGE_KEY = 'alpha-research.factor-catalog.page'
@@ -153,6 +153,7 @@ export default function FactorLibrary({ selected, onSelect, refreshKey = 0, batc
         <button className={source === 'CURRENT' ? 'active' : ''} onClick={() => setSource('CURRENT')}>自定义因子 <span>{counts?.current ?? 0}</span></button>
         <button className={source === 'ALPHA158' ? 'active' : ''} onClick={() => setSource('ALPHA158')}>Alpha158 <span>{counts?.alpha158 ?? 0}</span></button>
         <button className={source === 'JQDATA' ? 'active' : ''} onClick={() => setSource('JQDATA')}>JQDATA <span>{counts?.jqdata ?? 0}</span></button>
+        <button className={source === 'BANK' ? 'active' : ''} onClick={() => setSource('BANK')}>银行因子 <span>{counts?.bank ?? 0}</span></button>
       </div>
 
       <div className="category-tabs">
@@ -197,7 +198,7 @@ export default function FactorLibrary({ selected, onSelect, refreshKey = 0, batc
           }}
         >
           <div className="factor-card-head">
-            <span className={`source-tag ${factor.source_collection.toLowerCase()}`}>{factor.source_collection === 'ALPHA158' ? 'ALPHA158' : factor.source_collection === 'JQDATA' ? 'JQDATA' : '自定义'}</span>
+            <span className={`source-tag ${factor.source_collection.toLowerCase()}`}>{factor.source_collection === 'ALPHA158' ? 'ALPHA158' : factor.source_collection === 'JQDATA' ? 'JQDATA' : factor.source_collection === 'BANK' ? '银行因子' : '自定义'}</span>
             <span className="category-tag">{factor.category}</span>
             <span className="factor-status"><i />{factor.status_label}</span>
           </div>

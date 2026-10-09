@@ -59,6 +59,15 @@ export default function FactorBatchPanel({ selected, onFinished }: {
   }, [batch?.batch_id, batch?.status, onFinished])
 
   const factors = useMemo(() => Object.values(selected).sort((a, b) => a.factor_id.localeCompare(b.factor_id)), [selected])
+  const bankOnly = factors.length > 0 && factors.every((factor) => factor.source_collection === 'BANK')
+  useEffect(() => {
+    if (!bankOnly) return
+    setHolding(63)
+    setQuantiles(3)
+    setMinimumPairs(10)
+    setVariants(['WINSORIZED_ZSCORE'])
+    setPlan(null)
+  }, [bankOnly])
   useEffect(() => setPlan(null), [selected])
   const payload: FactorBatchPayload = {
     factors: factors.map((factor) => ({ factor_id: factor.factor_id, factor_version: factor.factor_version })),
@@ -126,7 +135,7 @@ export default function FactorBatchPanel({ selected, onFinished }: {
     <section className="panel">
       <div className="section-head"><span>02</span><div><h2>选择要跑的检验</h2><p>M4.5 对本批因子共同检验；必需的前置阶段由预检补齐。M4.7 自动生成结果界面。</p></div></div>
       <div className="stage-grid">{STAGES.map((stage) => <button key={stage.id} className={`stage-card ${stages.includes(stage.id) ? 'selected' : ''}`} onClick={() => toggleStage(stage.id)}><div className="stage-card-top"><span className="stage-number">{stage.id.toUpperCase().replace('_', '.')}</span><i>{stages.includes(stage.id) ? '✓' : ''}</i></div><h3>{stage.title}</h3><p>{stage.text}</p></button>)}<div className="stage-card selected locked"><div className="stage-card-top"><span className="stage-number">M4.7</span><i>✓</i></div><h3>看结果、做决策</h3><p>任务进度、报告与共同检验结果始终可查看。</p></div></div>
-      <div className="batch-params"><label>持仓期<select value={holding} onChange={(event) => { setHolding(Number(event.target.value)); setPlan(null) }}>{[5, 10, 20, 30].map((value) => <option key={value} value={value}>{value} 日</option>)}</select></label><details><summary>其他检验参数</summary><label>收益分组数<input type="number" min="2" max="20" value={quantiles} onChange={(event) => { setQuantiles(Number(event.target.value)); setPlan(null) }} /></label><label>每日最少有效样本<input type="number" min="3" value={minimumPairs} onChange={(event) => { setMinimumPairs(Number(event.target.value)); setPlan(null) }} /></label><div>{['WINSORIZED_ZSCORE', 'SIZE_NEUTRALIZED'].map((value) => <label key={value}><input type="checkbox" checked={variants.includes(value)} onChange={() => { setVariants((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value]); setPlan(null) }} />{value === 'WINSORIZED_ZSCORE' ? '缩尾标准化' : '规模中性化'}</label>)}</div></details></div>
+      <div className="batch-params"><label>持仓期<select value={holding} onChange={(event) => { setHolding(Number(event.target.value)); setPlan(null) }}>{[5, 10, 20, 30, 63, 126].map((value) => <option key={value} value={value}>{value} 日</option>)}</select></label><details><summary>其他检验参数</summary><label>收益分组数<input type="number" min="2" max="20" value={quantiles} onChange={(event) => { setQuantiles(Number(event.target.value)); setPlan(null) }} /></label><label>每日最少有效样本<input type="number" min="3" value={minimumPairs} onChange={(event) => { setMinimumPairs(Number(event.target.value)); setPlan(null) }} /></label><div>{['WINSORIZED_ZSCORE', 'SIZE_NEUTRALIZED'].map((value) => <label key={value}><input type="checkbox" checked={variants.includes(value)} onChange={() => { setVariants((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value]); setPlan(null) }} />{value === 'WINSORIZED_ZSCORE' ? '缩尾标准化' : '规模中性化'}</label>)}</div></details></div>
     </section>
     <section className="panel batch-run-panel">
       <div className="section-head"><span>03</span><div><h2>预检与运行</h2><p>因子按顺序计算；失败项不会阻止后续因子。</p></div></div>

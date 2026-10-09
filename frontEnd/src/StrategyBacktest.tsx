@@ -71,7 +71,7 @@ function factorById(options: StrategyOptions, factorId: string) {
 
 function FactorSelect({ options, value, onChange }: { options: StrategyOptions; value: string; onChange: (factor: StrategyFactorOption) => void }) {
   return <select value={value} onChange={(event) => { const factor = factorById(options, event.target.value); if (factor) onChange(factor) }}>
-    {options.factors.map((factor) => <option value={factor.factor_id} key={factor.factor_id}>{factor.chinese_name} · {factor.source_collection === 'CURRENT' ? '自定义因子' : factor.source_collection}</option>)}
+    {options.factors.map((factor) => <option value={factor.factor_id} key={factor.factor_id}>{factor.chinese_name} · {factor.source_collection === 'CURRENT' ? '自定义因子' : factor.source_collection === 'BANK' ? '银行因子' : factor.source_collection}</option>)}
   </select>
 }
 
@@ -339,7 +339,7 @@ export default function StrategyBacktest() {
       <section className="strategy-panel"><header><span>04</span><div><h2>持仓、调仓与成本</h2><p>信号在收盘后形成，下一交易日开盘尝试成交。</p></div></header><div className="strategy-fields compact">
         <label><span>目标持股数</span><input type="number" value={targetCount} onChange={(e) => setTargetCount(Number(e.target.value))} /></label>
         <label><span>保留排名</span><input type="number" value={retentionRank} onChange={(e) => setRetentionRank(Number(e.target.value))} /></label>
-        <label><span>每几日调仓</span><input type="number" value={rebalanceSessions} onChange={(e) => setRebalanceSessions(Number(e.target.value))} /></label>
+        <label><span>每几日调仓</span><input type="number" min="1" max="126" value={rebalanceSessions} onChange={(e) => setRebalanceSessions(Number(e.target.value))} /></label>
         <label><span>初始资金（元）</span><input type="number" value={initialCash} onChange={(e) => setInitialCash(Number(e.target.value))} /></label>
         <label><span>现金保留 %</span><input type="number" value={cashReserve} onChange={(e) => setCashReserve(Number(e.target.value))} /></label>
         <label><span>最大参与率 %</span><input type="number" value={participation} onChange={(e) => setParticipation(Number(e.target.value))} /></label>

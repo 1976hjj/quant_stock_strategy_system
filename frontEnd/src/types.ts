@@ -67,7 +67,7 @@ export interface JobStatus {
 }
 
 export type FactorCategory = '动量' | '波动' | '流动性' | '质量' | '估值' | '风格' | '量价' | '形态'
-export type FactorSource = 'ALL' | 'CURRENT' | 'ALPHA158' | 'JQDATA'
+export type FactorSource = 'ALL' | 'CURRENT' | 'ALPHA158' | 'JQDATA' | 'BANK'
 export type FactorStatus = 'ALL' | 'M4_COMPLETE' | 'CALCULATED' | 'CALCULATED_VERIFYING' | 'ACCURACY_FAILED' | 'NOT_CALCULATED'
 
 export interface FactorResultSummary {
@@ -94,7 +94,7 @@ export interface FactorCatalogItem {
   formula: string | null
   required_fields: string[]
   window_sessions?: number | null
-  source_collection: 'CURRENT' | 'ALPHA158' | 'JQDATA'
+  source_collection: 'CURRENT' | 'ALPHA158' | 'JQDATA' | 'BANK'
   source_label: string
   status: Exclude<FactorStatus, 'ALL'>
   status_label: string
@@ -122,6 +122,7 @@ export interface FactorCatalogResponse {
     current: number
     alpha158: number
     jqdata: number
+    bank: number
   }
   categories: Record<'全部' | FactorCategory, number>
 }
@@ -276,7 +277,7 @@ export interface FactorAssetRun {
   chinese_name: string
   external_name: string | null
   category: string
-  source_collection: 'CURRENT' | 'ALPHA158' | 'JQDATA'
+  source_collection: 'CURRENT' | 'ALPHA158' | 'JQDATA' | 'BANK'
   description: string
   asset_window: { start: string; end: string }
   test_window: { start: string; end: string } | null
@@ -300,7 +301,7 @@ export interface FactorAssetItem {
   chinese_name: string
   external_name: string | null
   category: string
-  source_collection: 'CURRENT' | 'ALPHA158' | 'JQDATA'
+  source_collection: 'CURRENT' | 'ALPHA158' | 'JQDATA' | 'BANK'
   description: string
   status_label: string
   m4_completed: boolean
@@ -318,5 +319,5 @@ export interface FactorAssetResponse {
   pageSize: number
   totalItems: number
   totalPages: number
-  counts: { total: number; tested: number; raw_only: number; with_execution: number; runs: number; current: number; alpha158: number; jqdata: number }
+  counts: { total: number; tested: number; raw_only: number; with_execution: number; runs: number; current: number; alpha158: number; jqdata: number; bank: number }
 }

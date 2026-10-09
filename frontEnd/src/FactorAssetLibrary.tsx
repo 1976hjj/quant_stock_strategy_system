@@ -52,7 +52,7 @@ function AssetCard({ asset, onDeleted }: { asset: FactorAssetItem; onDeleted: ()
 
   return <article className="asset-card">
     <div className="asset-title-row">
-      <div><div className="asset-tags"><span>{asset.source_collection === 'ALPHA158' ? 'ALPHA158' : asset.source_collection === 'JQDATA' ? 'JQDATA' : '自定义因子'}</span><span>{asset.category}</span></div><h2>{asset.chinese_name}</h2><code>{asset.external_name || asset.factor_id} · v{asset.factor_version}</code></div>
+      <div><div className="asset-tags"><span>{asset.source_collection === 'ALPHA158' ? 'ALPHA158' : asset.source_collection === 'JQDATA' ? 'JQDATA' : asset.source_collection === 'BANK' ? '银行因子' : '自定义因子'}</span><span>{asset.category}</span></div><h2>{asset.chinese_name}</h2><code>{asset.external_name || asset.factor_id} · v{asset.factor_version}</code></div>
       <div className="asset-overall-status"><b className={asset.m4_completed ? 'complete' : asset.tested_run_count ? 'partial' : 'raw'}>{asset.status_label}</b><span>{asset.run_count} 次运行 · {asset.horizons.length ? `${asset.horizons.join(' / ')} 日口径` : '尚未检验'}</span></div>
     </div>
 
@@ -135,6 +135,7 @@ export default function FactorAssetLibrary() {
       <button className={source === 'CURRENT' ? 'active' : ''} onClick={() => setSource('CURRENT')}>自定义因子 <span>{data?.counts.current ?? 0}</span></button>
       <button className={source === 'ALPHA158' ? 'active' : ''} onClick={() => setSource('ALPHA158')}>Alpha158 <span>{data?.counts.alpha158 ?? 0}</span></button>
       <button className={source === 'JQDATA' ? 'active' : ''} onClick={() => setSource('JQDATA')}>JQDATA <span>{data?.counts.jqdata ?? 0}</span></button>
+      <button className={source === 'BANK' ? 'active' : ''} onClick={() => setSource('BANK')}>银行因子 <span>{data?.counts.bank ?? 0}</span></button>
     </div>
 
     <div className="asset-filters">

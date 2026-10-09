@@ -29,6 +29,7 @@ function runDay(value?: string) {
 
 function universe(job: StrategyJobHistory) {
   const request = job.request
+  if (factorId(job)?.startsWith('bank-')) return '银行因子有效范围'
   if (!request || !('universe_segments' in request) || !request.universe_segments?.length) return '全A股'
   if (request.universe_segments.length === Object.keys(SEGMENT_NAMES).length) return '全A股'
   return request.universe_segments.map((item) => SEGMENT_NAMES[item]).join(' · ')
@@ -236,7 +237,7 @@ export default function SingleFactorReports({ onOpenRunning }: { onOpenRunning: 
     </div>
     <div className="single-filters">
       <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索因子名称、编号或策略名称" />
-      <select value={source} onChange={(event) => setSource(event.target.value)}><option value="ALL">全部来源</option>{sources.map((item) => <option value={item} key={item}>{item === 'CURRENT' ? '自定义因子' : item}</option>)}</select>
+      <select value={source} onChange={(event) => setSource(event.target.value)}><option value="ALL">全部来源</option>{sources.map((item) => <option value={item} key={item}>{item === 'CURRENT' ? '自定义因子' : item === 'BANK' ? '银行因子' : item}</option>)}</select>
       <select value={category} onChange={(event) => setCategory(event.target.value)}><option value="ALL">全部分类</option>{categories.map((item) => <option value={item} key={item}>{item}</option>)}</select>
       <label>运行日期<input type="date" value={selectedDay} onChange={(event) => setSelectedDay(event.target.value)} /></label>
       <span>找到 {visible.length} 条结果</span>
