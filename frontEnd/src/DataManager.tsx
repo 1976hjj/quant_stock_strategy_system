@@ -5,6 +5,7 @@ import type { DataInventory, DataJob, DataPlan, DataUpdateRequest } from './data
 function dateLabel(value: string | null) { return value || '尚无记录' }
 export default function DataManager() {
   const [inventory, setInventory] = useState<DataInventory | null>(null)
+  const [loading, setLoading] = useState(true)
   const [sourceId] = useState<'tushare' | 'eastmoney'>('tushare')
   const [selectedGroups, setSelectedGroups] = useState<string[]>([])
   const [selectedIndustries, setSelectedIndustries] = useState<string[]>(['bank_industry'])
@@ -37,7 +38,10 @@ export default function DataManager() {
     }
   }, [])
 
-  useEffect(() => { void refresh(true).catch((reason) => setError(String(reason))) }, [refresh])
+  useEffect(() => {
+    void refresh(true).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)))
+      .finally(() => setLoading(false))
+  }, [refresh])
   useEffect(() => {
     if (job?.status !== 'RUNNING') return
     const timer = window.setInterval(() => {
@@ -53,7 +57,7 @@ export default function DataManager() {
     setRefreshing(true)
     setError('')
     try {
-      await refresh()
+      await refresh(!inventory)
       setRefreshedAt(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }))
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
@@ -106,7 +110,7 @@ export default function DataManager() {
   return <main className="data-manager">
     <header className="data-heading"><div><span>DATA WORKBENCH</span><h1>数据管理与增量更新</h1><p>通用数据与行业数据分别更新。银行研究优先采用 Tushare，免费补充数据随行业同步。</p></div><div className="data-refresh"><button onClick={() => void refreshCoverage()} disabled={refreshing}>{refreshing ? '正在刷新…' : '刷新覆盖状态'}</button>{refreshedAt && <small>已刷新：{refreshedAt}</small>}</div></header>
     {error && <div className="data-alert error">{error}</div>}
-    {!inventory ? <div className="data-alert">正在读取数据目录…</div> : <>
+    {!inventory ? <div className="data-alert">{loading || refreshing ? '正在读取数据目录…' : '数据目录未加载，请点击“刷新覆盖状态”重试。'}</div> : <>
       {!!inventory.sources?.length && <section className="data-panel data-source-panel"><div className="data-section-title"><span>00</span><div><h2>数据来源</h2><p>通用数据使用 Tushare；行业数据按 Tushare 优先、免费补缺处理，并保留各来源版本。</p></div></div><div className="data-source-options">{inventory.sources.filter((source) => source.id === 'tushare').map((source) => <div key={source.id} className="data-source-option active"><strong>{source.name}</strong><em>需要 Token</em><span>{source.description}</span><small>{source.credential_status === 'configured' ? '已配置凭证 · 有效期及权限以更新结果为准' : source.credential_status === 'invalid' ? '凭证格式异常 · 请检查 Token 配置' : '未配置凭证 · 请配置 Token'}</small></div>)}</div></section>}
       <section className="data-panel"><div className="data-section-title"><span>01</span><div><h2>通用数据</h2><p>{sourceId === 'eastmoney' ? '当前免费源覆盖42家银行的财报指标。报告期与采集日期分别展示；最新版本归档到银行专用暂存库。' : '标记“策略必需”的项目默认勾选。取消后仍可更新其余数据，但不能认为目标日期已具备完整回测输入。'}</p></div></div>
         <div className={`data-group-grid ${sourceId === 'eastmoney' ? 'free-data-grid' : ''}`}>{visibleGroups.map((group) => <div className={`data-group ${selectedGroups.includes(group.id) ? 'selected' : ''}`} key={group.id}>

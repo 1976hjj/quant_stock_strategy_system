@@ -20,7 +20,7 @@ export default function FactorBatchPanel({ selected, onFinished }: {
 }) {
   const [start, setStart] = useState('2020-01-02')
   const [end, setEnd] = useState('')
-  const [bounds, setBounds] = useState<{ start: string | null; end: string | null } | null>(null)
+  const [bounds, setBounds] = useState<{ start: string | null; end: string | null; bank_start?: string; bank_end?: string } | null>(null)
   const [stages, setStages] = useState<UiStageId[]>(DEFAULT_STAGES)
   const [holding, setHolding] = useState(5)
   const [quantiles, setQuantiles] = useState(5)
@@ -59,6 +59,16 @@ export default function FactorBatchPanel({ selected, onFinished }: {
   }, [batch?.batch_id, batch?.status, onFinished])
 
   const factors = useMemo(() => Object.values(selected).sort((a, b) => a.factor_id.localeCompare(b.factor_id)), [selected])
+  const sectorOnly = factors.length > 0 && factors.every(factor => factor.observation_level === 'SECTOR')
+  const hasSector = factors.some(factor => factor.observation_level === 'SECTOR')
+  const hasBank = factors.some(factor => ['BANK', 'BANK_TIMING'].includes(factor.source_collection))
+  const minimumStart = hasBank && bounds?.bank_start && bounds?.start ? (bounds.bank_start > bounds.start ? bounds.bank_start : bounds.start) : bounds?.start
+  const maximumEnd = hasBank && bounds?.bank_end && bounds?.end ? (bounds.bank_end < bounds.end ? bounds.bank_end : bounds.end) : bounds?.end
+  useEffect(() => {
+    if (hasBank && maximumEnd && end > maximumEnd) { setEnd(maximumEnd); setPlan(null) }
+    if (hasBank && minimumStart && start < minimumStart) { setStart(minimumStart); setPlan(null) }
+  }, [hasBank, maximumEnd, minimumStart, end, start])
+  const effectiveStages = sectorOnly ? [] : stages
   const bankOnly = factors.length > 0 && factors.every((factor) => factor.source_collection === 'BANK')
   useEffect(() => {
     if (!bankOnly) return
@@ -71,7 +81,7 @@ export default function FactorBatchPanel({ selected, onFinished }: {
   useEffect(() => setPlan(null), [selected])
   const payload: FactorBatchPayload = {
     factors: factors.map((factor) => ({ factor_id: factor.factor_id, factor_version: factor.factor_version })),
-    start, end, stages, holding_sessions: holding, quantile_count: quantiles,
+    start, end, stages: effectiveStages, holding_sessions: holding, quantile_count: quantiles,
     minimum_pairs_per_session: minimumPairs, processed_variants: variants,
     selection_quantile: 0.2, capital_scenarios_cny: [1_000_000, 10_000_000, 100_000_000],
     buy_commission_bps: 3, sell_commission_bps: 3, sell_stamp_duty_bps: 5,
@@ -79,7 +89,7 @@ export default function FactorBatchPanel({ selected, onFinished }: {
     maximum_participation_rate: 0.1,
   }
 
-  const valid = factors.length > 0 && Boolean(start && end) && start <= end && (!bounds?.start || start >= bounds.start) && (!bounds?.end || end <= bounds.end)
+  const valid = factors.length > 0 && Boolean(start && end) && start <= end && (!minimumStart || start >= minimumStart) && (!maximumEnd || end <= maximumEnd)
   const toggleStage = (id: UiStageId) => {
     setStages((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])
     setPlan(null)
@@ -124,25 +134,26 @@ export default function FactorBatchPanel({ selected, onFinished }: {
 
   return <div className="factor-batch-workspace">
     <section className="panel">
-      <div className="section-head"><span>01</span><div><h2>批量计算因子</h2><p>已选 {factors.length} 个因子。所有因子使用同一目标日期范围，已有覆盖自动复用或补齐。</p></div></div>
+      <div className="section-head"><span>01</span><div><h2>批量计算因子</h2><p>已选 {factors.length} 个因子。所有因子使用同一目标日期范围，已有覆盖自动复用或补齐。银行数据准备随计算自动完成。</p></div></div>
       <div className="batch-dates">
-        <label>开始日期<input type="date" value={start} min={bounds?.start || undefined} max={end || bounds?.end || undefined} onChange={(event) => { setStart(event.target.value); setPlan(null) }} /></label>
-        <label>结束日期<input type="date" value={end} min={start || bounds?.start || undefined} max={bounds?.end || undefined} onChange={(event) => { setEnd(event.target.value); setPlan(null) }} /></label>
-        <span>本地数据：{bounds?.start || '—'} 至 {bounds?.end || '—'}</span>
+        <label>开始日期<input type="date" value={start} min={minimumStart || undefined} max={end || maximumEnd || undefined} onChange={(event) => { setStart(event.target.value); setPlan(null) }} /></label>
+        <label>结束日期<input type="date" value={end} min={start || minimumStart || undefined} max={maximumEnd || undefined} onChange={(event) => { setEnd(event.target.value); setPlan(null) }} /></label>
+        <span>{hasBank ? '银行开放研究范围' : '本地数据'}：{minimumStart || '—'} 至 {maximumEnd || '—'}</span>
       </div>
       {factors.length > 0 && <div className="batch-factor-names">{factors.map((factor) => <span key={factor.factor_id}>{factor.chinese_name}</span>)}</div>}
     </section>
-    <section className="panel">
+    {!sectorOnly && <section className="panel">
       <div className="section-head"><span>02</span><div><h2>选择要跑的检验</h2><p>M4.5 对本批因子共同检验；必需的前置阶段由预检补齐。M4.7 自动生成结果界面。</p></div></div>
       <div className="stage-grid">{STAGES.map((stage) => <button key={stage.id} className={`stage-card ${stages.includes(stage.id) ? 'selected' : ''}`} onClick={() => toggleStage(stage.id)}><div className="stage-card-top"><span className="stage-number">{stage.id.toUpperCase().replace('_', '.')}</span><i>{stages.includes(stage.id) ? '✓' : ''}</i></div><h3>{stage.title}</h3><p>{stage.text}</p></button>)}<div className="stage-card selected locked"><div className="stage-card-top"><span className="stage-number">M4.7</span><i>✓</i></div><h3>看结果、做决策</h3><p>任务进度、报告与共同检验结果始终可查看。</p></div></div>
       <div className="batch-params"><label>持仓期<select value={holding} onChange={(event) => { setHolding(Number(event.target.value)); setPlan(null) }}>{[5, 10, 20, 30, 63, 126].map((value) => <option key={value} value={value}>{value} 日</option>)}</select></label><details><summary>其他检验参数</summary><label>收益分组数<input type="number" min="2" max="20" value={quantiles} onChange={(event) => { setQuantiles(Number(event.target.value)); setPlan(null) }} /></label><label>每日最少有效样本<input type="number" min="3" value={minimumPairs} onChange={(event) => { setMinimumPairs(Number(event.target.value)); setPlan(null) }} /></label><div>{['WINSORIZED_ZSCORE', 'SIZE_NEUTRALIZED'].map((value) => <label key={value}><input type="checkbox" checked={variants.includes(value)} onChange={() => { setVariants((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value]); setPlan(null) }} />{value === 'WINSORIZED_ZSCORE' ? '缩尾标准化' : '规模中性化'}</label>)}</div></details></div>
-    </section>
+    </section>}
     <section className="panel batch-run-panel">
       <div className="section-head"><span>03</span><div><h2>预检与运行</h2><p>因子按顺序计算；失败项不会阻止后续因子。</p></div></div>
-      <div className="batch-run-actions"><button disabled={!valid || working || batch?.status === 'RUNNING'} onClick={() => void preflight()}>{working ? '处理中…' : '预检批次'}</button><button className="primary" disabled={!plan || working || batch?.status === 'RUNNING'} onClick={() => void startBatch()}>计算 {factors.length} 个因子{stages.length ? '并运行 M4' : ''}</button></div>
+      {hasSector && <p>板块因子按交易日计算，覆盖不足保留空值和原因；所选 M4 阶段仅适用于个股因子。</p>}
+      <div className="batch-run-actions"><button disabled={!valid || working || batch?.status === 'RUNNING'} onClick={() => void preflight()}>{working ? '处理中…' : '预检批次'}</button><button className="primary" disabled={!plan || working || batch?.status === 'RUNNING'} onClick={() => void startBatch()}>计算 {factors.length} 个因子{effectiveStages.length ? '并运行 M4' : ''}</button></div>
       {error && <div className="factor-compute-error">{error}</div>}
       {plan && <div className="batch-plan"><strong>预检通过：{plan.count} 个因子</strong><p>目标区间 {plan.start} 至 {plan.end} · 将运行 {plan.resolved_stages.length ? plan.resolved_stages.map((stage) => stage.toUpperCase().replace('_', '.')).join('、') : '仅计算因子值'}</p>{plan.added_stages.length > 0 && <p>自动补齐前置阶段：{plan.added_stages.map((stage) => stage.toUpperCase().replace('_', '.')).join('、')}</p>}<span>{plan.items.filter((item) => item.action === '已覆盖，可复用').length} 个已覆盖 · {plan.items.filter((item) => item.action !== '已覆盖，可复用').length} 个需计算或补齐{plan.estimated_pair_correlations > 0 ? ` · M4.5 约 ${plan.estimated_pair_correlations.toLocaleString()} 对比较` : ''}</span>{plan.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
-      {batch && <FactorBatchProgress batch={batch} working={working} onStop={() => void stopBatch()} onRetry={() => void retryBatch()} />}
+      {batch && <><p>最近执行记录 · 批次包含 {batch.total} 个因子，本次待运行选择以上方列表为准。</p><FactorBatchProgress batch={batch} working={working} onStop={() => void stopBatch()} onRetry={() => void retryBatch()} /></>}
     </section>
   </div>
 }

@@ -1027,3 +1027,35 @@ select:focus, input:focus { border-color: #4b946f; box-shadow: 0 0 0 3px rgba(20
 .bank-data-summary { display: flex; flex-wrap: wrap; gap: 6px 24px; margin-top: 12px; font-size: 11px; color: #496b57; }
 .bank-data-summary b { width: 100%; color: #176d4b; font-size: 13px; }
 @media (max-width: 720px) { .data-source-options { grid-template-columns: 1fr; } }
+
+.source-tag.bank_timing { background: #e6eef8; color: #315a87; }
+.bank-timing-note { margin: 12px 0; padding: 14px 18px; border: 1px solid #ccdced; border-radius: 10px; background: #f4f8fc; color: #31516d; }
+.bank-timing-note p { margin: 7px 0 0; line-height: 1.7; }
+.bank-timing-batch { margin: 7px 0; color: #315a87; font-size: 11px; }
+.factor-card details dd { overflow-wrap: anywhere; }
+
+.processing-workbench { margin-top: 28px; color: #1c3029; }
+.processing-heading,.processing-table-heading { display:flex; align-items:center; justify-content:space-between; gap:18px; margin-bottom:20px; flex-wrap:wrap; }
+.processing-heading h2 { margin:0 0 8px; font-size:24px; }.processing-heading p { margin:0; color:#77857f; line-height:1.7; }
+.processing-workbench button { border:1px solid #cbdad1; background:white; color:#176745; border-radius:9px; padding:10px 16px; cursor:pointer; font-weight:600; }
+.processing-workbench button:disabled { opacity:.45; cursor:not-allowed; }.processing-workbench button.primary { background:#137949; color:white; border-color:#137949; }
+.processing-flow { display:flex; align-items:center; gap:14px; padding:18px 20px; border:1px solid #d9e6de; background:#eef5ef; border-radius:14px; flex-wrap:wrap; margin-bottom:18px; }
+.processing-flow span { display:flex; flex-direction:column; gap:5px; font-size:12px; color:#637a6d; flex:1; min-width:120px; }.processing-flow b { color:#244b37; font-size:14px; }.processing-flow i { color:#92aa99; font-style:normal; }
+.processing-range { display:flex; align-items:center; gap:18px; flex-wrap:wrap; padding:16px 0 22px; }.processing-range label { display:flex; flex-direction:column; gap:8px; font-size:12px; }.processing-range>div { display:flex; flex-direction:column; gap:8px; font-size:12px; color:#738578; }
+.processing-workbench input[type=date],.processing-workbench select { padding:10px 12px; border:1px solid #cbdad1; border-radius:8px; background:#fff; color:#244b37; max-width:100%; min-height:40px; }
+.processing-cards { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; }.processing-indicators .processing-cards { grid-template-columns:1fr; }
+.processing-card { margin:0!important; padding:24px!important; }.processing-card .data-section-title { flex-wrap:wrap; }.processing-card .data-section-title h3 { margin:0 0 6px; font-size:19px; }.processing-card .data-section-title p { margin:0; color:#77857f; line-height:1.6; font-size:12px; }
+.processing-card em { font-style:normal; font-size:11px; border-radius:6px; padding:5px 8px; }.processing-ready { color:#216b47; background:#e4f2e7; }.processing-stale { color:#946327; background:#fff0d8; }.processing-pending { color:#77857f; background:#edf0ed; }
+.processing-version { display:flex; flex-direction:column; gap:8px; padding:16px; background:#f4f7f3; border-radius:10px; margin:16px 0; font-size:12px; color:#61776a; }.processing-version b { color:#244b37; }
+.processing-source { display:flex; flex-direction:column; gap:10px; font-size:12px; }.processing-source small,.processing-grade { color:#7b8b80; line-height:1.7; }.processing-grade { display:block; margin-top:16px; }
+.processing-card .data-actions { flex-wrap:wrap; display:flex; gap:10px; margin-top:20px; }.processing-card .data-plan { margin-top:16px; }
+.processing-factor-options { margin-top:20px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }.processing-factor-options>div { grid-column:1/-1; display:flex; align-items:center; justify-content:space-between; font-size:13px; }.processing-factor-options label { display:flex; align-items:center; gap:8px; padding:12px; border:1px solid #dce6df; border-radius:8px; font-size:12px; }.processing-factor-options label span { flex:1; }.processing-factor-options small { color:#849387; white-space:nowrap; }.processing-factor-options input[type=checkbox] { width:16px; height:16px; min-height:16px; flex:0 0 16px; margin:0; padding:0; accent-color:#157a48; }.processing-factor-options label { min-width:0; cursor:pointer; }.processing-factor-options label span { min-width:0; line-height:1.6; }.processing-table-heading label { white-space:nowrap; }.processing-table-heading select { width:auto; min-width:128px; }
+.processing-table-panel,.processing-job { margin-top:20px!important; }.processing-table-heading h3 { margin:0; }.processing-table-heading label { font-size:12px; display:flex; align-items:center; gap:10px; }.processing-table-heading small { color:#7b8b80; }
+.processing-table-scroll { overflow-x:auto; }.processing-table-scroll table { width:100%; border-collapse:collapse; font-size:12px; text-align:left; }.processing-table-scroll th { background:#eef5ef; color:#52705d; }.processing-table-scroll th,.processing-table-scroll td { padding:13px 12px; border-bottom:1px solid #e6ede7; }.processing-table-scroll td { line-height:1.6; }
+.processing-pagination { display:flex; gap:14px; align-items:center; justify-content:flex-end; margin-top:18px; font-size:12px; }.processing-job p { font-size:13px; color:#6e8074; }.processing-job pre { max-height:240px; overflow:auto; white-space:pre-wrap; font-size:11px; }.processing-job-pass { color:#187345; }.processing-job-fail { color:#b55f46; }.processing-job-running { color:#876d2c; }
+@media (max-width:900px) { .processing-cards,.processing-factor-options { grid-template-columns:1fr; }.processing-range input { min-width:0; }.processing-card { padding:18px!important; } }
+
+.workspace.factor-values-only { grid-template-columns:minmax(0,1fr); }
+.factor-values { margin-top:16px; font-size:12px; color:#456752; }
+.factor-values summary { cursor:pointer; padding:10px 0; }
+.factor-values button { padding:7px 10px; border:1px solid #cbdad1; border-radius:8px; background:#fff; color:#176745; }

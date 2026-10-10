@@ -67,7 +67,7 @@ export interface JobStatus {
 }
 
 export type FactorCategory = '动量' | '波动' | '流动性' | '质量' | '估值' | '风格' | '量价' | '形态'
-export type FactorSource = 'ALL' | 'CURRENT' | 'ALPHA158' | 'JQDATA' | 'BANK'
+export type FactorSource = 'ALL' | 'CURRENT' | 'ALPHA158' | 'JQDATA' | 'BANK' | 'BANK_TIMING'
 export type FactorStatus = 'ALL' | 'M4_COMPLETE' | 'CALCULATED' | 'CALCULATED_VERIFYING' | 'ACCURACY_FAILED' | 'NOT_CALCULATED'
 
 export interface FactorResultSummary {
@@ -94,7 +94,17 @@ export interface FactorCatalogItem {
   formula: string | null
   required_fields: string[]
   window_sessions?: number | null
-  source_collection: 'CURRENT' | 'ALPHA158' | 'JQDATA' | 'BANK'
+  observation_level?: 'STOCK' | 'SECTOR'
+  research_batch?: 1 | 2
+  compute_supported?: boolean
+  m4_supported?: boolean
+  output_components?: string[]
+  parameters?: Record<string, number | string>
+  dependency_note?: string
+  research_scope?: string
+  coverage_policy?: string
+  percentile_policy?: string
+  source_collection: 'CURRENT' | 'ALPHA158' | 'JQDATA' | 'BANK' | 'BANK_TIMING'
   source_label: string
   status: Exclude<FactorStatus, 'ALL'>
   status_label: string
@@ -123,6 +133,7 @@ export interface FactorCatalogResponse {
     alpha158: number
     jqdata: number
     bank: number
+    bank_timing: number
   }
   categories: Record<'全部' | FactorCategory, number>
 }
@@ -150,7 +161,7 @@ export interface FactorJobStatus {
     session_count?: number
     instrument_count?: number
     calculation?: {
-      mode: 'FULL' | 'INCREMENTAL' | 'FULL_AFTER_MISMATCH'
+      mode: string
       message: string
       parent_release_id?: string
       overlap?: {
@@ -234,6 +245,8 @@ export interface FactorBatchStatus {
     release_id: string | null
     m4_job_id: string | null
     error: string | null
+    observation_level?: 'STOCK' | 'SECTOR'
+    data_warnings?: string[]
     progress?: number
     factor_years?: { completed: number; total: number }
     stage_progress?: FactorBatchStageProgress | null
@@ -243,6 +256,15 @@ export interface FactorBatchStatus {
   cohort_stage_progress?: FactorBatchStageProgress | null
   error: string | null
   stop_requested: boolean
+}
+
+export interface SectorValuePage {
+  page: number
+  totalPages: number
+  totalItems: number
+  items: Array<{ session: string; value: number | null; valid_count: number; universe_count: number;
+    coverage: number; status: string; reason: string; reason_detail?: string;
+    denominator_count?: number; coverage_basis?: string }>
 }
 
 export type FactorAssetStatus = 'ALL' | 'TESTED' | 'RAW_ONLY' | 'WITH_EXECUTION'
@@ -277,7 +299,7 @@ export interface FactorAssetRun {
   chinese_name: string
   external_name: string | null
   category: string
-  source_collection: 'CURRENT' | 'ALPHA158' | 'JQDATA' | 'BANK'
+  source_collection: 'CURRENT' | 'ALPHA158' | 'JQDATA' | 'BANK' | 'BANK_TIMING'
   description: string
   asset_window: { start: string; end: string }
   test_window: { start: string; end: string } | null
@@ -301,7 +323,7 @@ export interface FactorAssetItem {
   chinese_name: string
   external_name: string | null
   category: string
-  source_collection: 'CURRENT' | 'ALPHA158' | 'JQDATA' | 'BANK'
+  source_collection: 'CURRENT' | 'ALPHA158' | 'JQDATA' | 'BANK' | 'BANK_TIMING'
   description: string
   status_label: string
   m4_completed: boolean

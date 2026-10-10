@@ -3,7 +3,7 @@ import { api } from './api'
 import type { FactorCatalogItem, FactorCatalogResponse, FactorCategory, FactorSource, FactorStatus } from './types'
 
 const CATEGORIES: Array<'全部' | FactorCategory> = ['全部', '动量', '波动', '流动性', '质量', '估值', '风格', '量价', '形态']
-const SOURCES: FactorSource[] = ['ALL', 'CURRENT', 'ALPHA158', 'JQDATA', 'BANK']
+const SOURCES: FactorSource[] = ['ALL', 'CURRENT', 'ALPHA158', 'JQDATA', 'BANK', 'BANK_TIMING']
 const CATEGORY_STORAGE_KEY = 'alpha-research.factor-catalog.category'
 const SOURCE_STORAGE_KEY = 'alpha-research.factor-catalog.source'
 const PAGE_STORAGE_KEY = 'alpha-research.factor-catalog.page'
@@ -64,6 +64,7 @@ export default function FactorLibrary({ selected, onSelect, refreshKey = 0, batc
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [addingFiltered, setAddingFiltered] = useState(false)
+  const [definitionId, setDefinitionId] = useState<string | null>(null)
   const filtersKey = JSON.stringify([category, source, status, debouncedSearch])
   const previousFilters = useRef(filtersKey)
 
@@ -116,7 +117,7 @@ export default function FactorLibrary({ selected, onSelect, refreshKey = 0, batc
   }
 
   const addFiltered = async () => {
-    if (!data?.totalItems) return
+    if (loading || !data?.totalItems) return
     setAddingFiltered(true)
     setError('')
     try {
@@ -124,7 +125,7 @@ export default function FactorLibrary({ selected, onSelect, refreshKey = 0, batc
       const results = await Promise.all(pages.map((current) => api.factorCatalog({
         page: current, pageSize: 100, query: debouncedSearch, category, source, status,
       })))
-      onBatchAdd(results.flatMap((result) => result.items))
+      onBatchAdd(results.flatMap((result) => result.items).filter((factor) => factor.compute_supported !== false))
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
@@ -154,7 +155,14 @@ export default function FactorLibrary({ selected, onSelect, refreshKey = 0, batc
         <button className={source === 'ALPHA158' ? 'active' : ''} onClick={() => setSource('ALPHA158')}>Alpha158 <span>{counts?.alpha158 ?? 0}</span></button>
         <button className={source === 'JQDATA' ? 'active' : ''} onClick={() => setSource('JQDATA')}>JQDATA <span>{counts?.jqdata ?? 0}</span></button>
         <button className={source === 'BANK' ? 'active' : ''} onClick={() => setSource('BANK')}>银行因子 <span>{counts?.bank ?? 0}</span></button>
+        <button className={source === 'BANK_TIMING' ? 'active' : ''} onClick={() => setSource('BANK_TIMING')}>银行板块择时 <span>{counts?.bank_timing ?? 0}</span></button>
       </div>
+
+      {source === 'BANK_TIMING' && <div className="bank-timing-note">
+        <strong>第一批 7 项 · 第二批 3 项</strong>
+        <p>与其他因子一样选择并计算。任务自动准备银行基础输入，按交易日生成板块结果；缺口和数据错误在预检、进度及结果中显示。</p>
+      </div>}
+
 
       <div className="category-tabs">
         {CATEGORIES.map((name) => <button key={name} className={category === name ? 'active' : ''} onClick={() => setCategory(name)}>{name}<small>{data?.categories[name] ?? 0}</small></button>)}
@@ -175,7 +183,7 @@ export default function FactorLibrary({ selected, onSelect, refreshKey = 0, batc
 
       <div className="batch-select-toolbar">
         <button className={batchMode ? 'active' : ''} onClick={() => onBatchModeChange(!batchMode)}>{batchMode ? '✓ 批量选择中' : '批量选择因子'}</button>
-        {batchMode && <><button disabled={addingFiltered || !data?.totalItems} onClick={() => void addFiltered()}>{addingFiltered ? '选择中…' : '选择当前筛选结果'}</button><button disabled={!Object.keys(batchSelected).length} onClick={onBatchClear}>清空选择</button><strong>已选 {Object.keys(batchSelected).length} 个</strong></>}
+        {batchMode && <><button disabled={loading || addingFiltered || !data?.totalItems} onClick={() => void addFiltered()}>{addingFiltered ? '选择中…' : '选择当前筛选结果'}</button><button disabled={!Object.keys(batchSelected).length} onClick={onBatchClear}>清空选择</button><strong>已选 {Object.keys(batchSelected).length} 个</strong></>}
       </div>
 
       {error && <div className="catalog-message error">目录读取失败：{error}</div>}
@@ -184,25 +192,26 @@ export default function FactorLibrary({ selected, onSelect, refreshKey = 0, batc
 
       {data && <div className="factor-card-grid" aria-busy={loading}>
         {data?.items.map((factor) => <article
-          className={`factor-card status-${factor.status.toLowerCase()} ${batchMode ? 'batch-selectable' : ''} ${batchSelected[factor.factor_id] ? 'selected-factor' : selected?.factor_id === factor.factor_id ? 'selected-factor' : ''}`}
+          className={`factor-card status-${factor.status.toLowerCase()} ${batchMode && factor.compute_supported !== false ? 'batch-selectable' : ''} ${batchSelected[factor.factor_id] ? 'selected-factor' : selected?.factor_id === factor.factor_id ? 'selected-factor' : ''}`}
           key={`${factor.factor_id}-${factor.factor_version}`}
-          role={batchMode ? 'button' : undefined}
-          tabIndex={batchMode ? 0 : undefined}
-          aria-pressed={batchMode ? Boolean(batchSelected[factor.factor_id]) : undefined}
-          onClick={() => { if (batchMode) onBatchToggle(factor) }}
+          role={batchMode && factor.compute_supported !== false ? 'button' : undefined}
+          tabIndex={batchMode && factor.compute_supported !== false ? 0 : undefined}
+          aria-pressed={batchMode && factor.compute_supported !== false ? Boolean(batchSelected[factor.factor_id]) : undefined}
+          onClick={() => { if (batchMode && factor.compute_supported !== false) onBatchToggle(factor) }}
           onKeyDown={(event) => {
-            if (batchMode && !event.repeat && (event.key === 'Enter' || event.key === ' ')) {
+            if (batchMode && factor.compute_supported !== false && !event.repeat && (event.key === 'Enter' || event.key === ' ')) {
               event.preventDefault()
               onBatchToggle(factor)
             }
           }}
         >
           <div className="factor-card-head">
-            <span className={`source-tag ${factor.source_collection.toLowerCase()}`}>{factor.source_collection === 'ALPHA158' ? 'ALPHA158' : factor.source_collection === 'JQDATA' ? 'JQDATA' : factor.source_collection === 'BANK' ? '银行因子' : '自定义'}</span>
+            <span className={`source-tag ${factor.source_collection.toLowerCase()}`}>{factor.source_collection === 'ALPHA158' ? 'ALPHA158' : factor.source_collection === 'JQDATA' ? 'JQDATA' : factor.source_collection === 'BANK' ? '银行因子' : factor.source_collection === 'BANK_TIMING' ? '银行择时' : '自定义'}</span>
             <span className="category-tag">{factor.category}</span>
             <span className="factor-status"><i />{factor.status_label}</span>
           </div>
           <h3>{factor.chinese_name}</h3>
+          {factor.research_batch && <div className="bank-timing-batch">第{factor.research_batch === 1 ? '一' : '二'}批 · 板块仓位研究</div>}
           <code>{factor.external_name || factor.factor_id} · v{factor.factor_version}</code>
           {factor.coverage && <div className="factor-coverage" aria-label="已算区间">
             <span>已算区间</span>
@@ -213,9 +222,13 @@ export default function FactorLibrary({ selected, onSelect, refreshKey = 0, batc
 
           <button className="factor-select" onClick={(event) => {
             event.stopPropagation()
+            if (factor.compute_supported === false) {
+              setDefinitionId((current) => current === factor.factor_id ? null : factor.factor_id)
+              return
+            }
             batchMode ? onBatchToggle(factor) : onSelect(factor)
           }}>
-            {batchMode ? batchSelected[factor.factor_id] ? '✓ 已加入批次' : '加入本次批次' : selected?.factor_id === factor.factor_id ? '✓ 已选为本次运行对象' : factor.calculated ? '选择并复现这个因子' : '选择并计算这个因子'}
+            {factor.compute_supported === false ? '查看指标定义' : batchMode ? batchSelected[factor.factor_id] ? '✓ 已加入批次' : '加入本次批次' : selected?.factor_id === factor.factor_id ? '✓ 已选为本次运行对象' : factor.calculated ? '选择并复现这个因子' : '选择并计算这个因子'}
           </button>
 
           {factor.result ? <>
@@ -225,15 +238,29 @@ export default function FactorLibrary({ selected, onSelect, refreshKey = 0, batc
               <div><span>千万资金成交率</span><strong>{percent(factor.result.fill_rate_10m)}</strong></div>
             </div>
             <div className={`factor-conclusion ${factor.result.tone}`}>{factor.result.conclusion}</div>
-          </> : <div className="not-computed"><span>尚无数值和收益检验结果</span><b>等待计算</b></div>}
+          </> : <div className="not-computed"><span>{factor.observation_level === 'SECTOR' && factor.calculated ? '板块研究值已生成，尚无收益检验结果' : '尚无数值和收益检验结果'}</span><b>{factor.calculated ? '已算值' : factor.compute_supported === false ? '已接入定义' : '等待计算'}</b></div>}
 
-          <details onClick={(event) => event.stopPropagation()}>
+          <details open={factor.compute_supported === false ? definitionId === factor.factor_id : undefined}
+            onToggle={(event) => {
+              if (factor.compute_supported !== false) return
+              const isOpen = event.currentTarget.open
+              setDefinitionId((current) => isOpen ? factor.factor_id : current === factor.factor_id ? null : current)
+            }} onClick={(event) => event.stopPropagation()}>
             <summary>查看定义与数据状态</summary>
             <dl>
               <div><dt>内部编号</dt><dd>{factor.factor_id}</dd></div>
               <div><dt>来源</dt><dd>{factor.source_label}</dd></div>
               <div><dt>公式</dt><dd><code>{factor.formula || '—'}</code></dd></div>
               <div><dt>所需字段</dt><dd>{factor.required_fields.join('、') || '—'}</dd></div>
+              {factor.observation_level === 'SECTOR' && <>
+                <div><dt>观测粒度</dt><dd>每日一组银行板块观测</dd></div>
+                <div><dt>用途</dt><dd>{factor.research_scope}</dd></div>
+                <div><dt>输出分项</dt><dd>{factor.output_components?.join('、')}</dd></div>
+                <div><dt>研究默认参数</dt><dd><code>{JSON.stringify(factor.parameters)}</code></dd></div>
+                <div><dt>数据依赖</dt><dd>{factor.dependency_note}</dd></div>
+                <div><dt>覆盖与缺失</dt><dd>{factor.coverage_policy}</dd></div>
+                <div><dt>历史分位口径</dt><dd>{factor.percentile_policy}</dd></div>
+              </>}
               {factor.coverage && <div><dt>已算区间</dt><dd>{factor.coverage.start} 至 {factor.coverage.end}</dd></div>}
             </dl>
           </details>

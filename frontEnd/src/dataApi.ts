@@ -82,11 +82,17 @@ export interface DataJob {
 }
 
 async function call<T>(path: string, body?: unknown): Promise<T> {
-  const response = await fetch(`${DATA_API_ROOT}${path}`, {
-    method: body === undefined ? 'GET' : 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  })
+  let response: Response
+  try {
+    response = await fetch(`${DATA_API_ROOT}${path}`, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
+  } catch (reason) {
+    if (reason instanceof TypeError) throw new Error('数据服务暂时无法连接，请稍后点击“刷新覆盖状态”重试。')
+    throw reason
+  }
   const value = await response.json().catch(() => ({}))
   if (!response.ok) throw new Error(value.detail || value.error || `请求失败 (${response.status})`)
   return value as T

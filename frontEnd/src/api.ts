@@ -1,4 +1,4 @@
-import type { FactorAssetResponse, FactorAssetStatus, FactorBatchPayload, FactorBatchPlan, FactorBatchStatus, FactorCatalogResponse, FactorComputePayload, FactorJobStatus, FactorSource, FactorStatus, JobStatus, M4Options, PreflightResult, RunPayload } from './types'
+import type { FactorAssetResponse, FactorAssetStatus, FactorBatchPayload, FactorBatchPlan, FactorBatchStatus, FactorCatalogResponse, FactorComputePayload, FactorJobStatus, FactorSource, FactorStatus, JobStatus, M4Options, PreflightResult, RunPayload, SectorValuePage } from './types'
 
 export const API_ROOT = (import.meta.env.VITE_M4_API_URL || 'http://127.0.0.1:8771/api/v1').replace(/\/$/, '')
 
@@ -31,6 +31,10 @@ export function factorAssets(params: {
 }
 
 export const api = {
+  sectorValues: (releaseId: string, factorId: string, page = 1) => {
+    const query = new URLSearchParams({ release_id: releaseId, factor_id: factorId, page: String(page), pageSize: '20' })
+    return request<SectorValuePage>(`/factors/sector-values?${query}`)
+  },
   health: () => request<{ status: string }>('/health'),
   options: () => request<M4Options>('/m4/options'),
   preflight: (payload: RunPayload) =>
@@ -68,7 +72,7 @@ export const api = {
   startFactorBatch: (payload: FactorBatchPayload) =>
     request<FactorBatchStatus>('/factors/batches', { method: 'POST', body: JSON.stringify(payload) }),
   latestFactorBatch: () => request<{ batch: FactorBatchStatus | null }>('/factors/batches/latest'),
-  factorBatchOptions: () => request<{ start: string | null; end: string | null }>('/factors/batches/options'),
+  factorBatchOptions: () => request<{ start: string | null; end: string | null; bank_start?: string; bank_end?: string }>('/factors/batches/options'),
   factorBatchStatus: (batchId: string) => request<FactorBatchStatus>(`/factors/batches/${batchId}`),
   stopFactorBatch: (batchId: string) => request<FactorBatchStatus>(`/factors/batches/${batchId}/stop`, { method: 'POST', body: '{}' }),
   retryFactorBatch: (batchId: string) => request<FactorBatchStatus>(`/factors/batches/${batchId}/retry`, { method: 'POST', body: '{}' }),

@@ -1,4 +1,5 @@
 import { api } from './api'
+import FactorValueDetails from './FactorValueDetails'
 import type { FactorBatchStageProgress, FactorBatchStatus } from './types'
 
 const statusText: Record<string, string> = {
@@ -51,6 +52,8 @@ export default function FactorBatchProgress({ batch, working, onStop, onRetry }:
       {item.status === 'RUNNING' && <StepList progress={item.stage_progress} />}
       {item.status !== 'RUNNING' && item.stage_progress && <details className="batch-step-details"><summary>查看检验步骤</summary><StepList progress={item.stage_progress} /></details>}
       {item.error && <small className="batch-error" title={item.error}>{item.error}</small>}
+      {item.data_warnings?.map(warning => <small className="batch-error" key={warning}>{warning}</small>)}
+      {item.observation_level === 'SECTOR' && item.release_id && <FactorValueDetails key={item.release_id} releaseId={item.release_id} factorId={item.factor_id} />}
     </div>)}</div>
     {batch.request.stages.includes('m4_5') && <div className="batch-cohort-row">
       <div className="batch-result-main"><b>本批联合 M4.5</b><span className={`batch-status ${batch.cohort_status.toLowerCase()}`}>{statusText[batch.cohort_status] || batch.cohort_status}</span>{batch.cohort_job_id && batch.cohort_status === 'PASS' && <a href={api.explorerUrl(batch.cohort_job_id)} target="_blank" rel="noreferrer">查看共同检验 ↗</a>}</div>

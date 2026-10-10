@@ -3,6 +3,7 @@ import { api } from './api'
 import FactorAssetLibrary from './FactorAssetLibrary'
 import FactorLibrary from './FactorLibrary'
 import FactorBatchPanel from './FactorBatchPanel'
+import FactorValueDetails from './FactorValueDetails'
 import DataManager from './DataManager'
 import RotationBacktest from './RotationBacktest'
 import StrategyBacktest, { STRATEGY_JOB_EVENT, STRATEGY_JOB_STORAGE_KEY } from './StrategyBacktest'
@@ -126,6 +127,7 @@ export default function App() {
   const refreshedFactorStates = useRef(new Set<string>())
 
   const release = options?.factor_releases.find((item) => item.release_id === releaseId)
+  const sectorSelected = selectedFactor?.observation_level === 'SECTOR'
   const executionSelected = stages.includes('m4_6')
   const factorCalculationRunning = batchCalculationRunning
     || job?.status === 'RUNNING'
@@ -265,7 +267,7 @@ export default function App() {
           try {
             const loadedOptions = await api.options()
             setOptions(loadedOptions)
-            setReleaseId(next.release_id)
+            setReleaseId(next.factor_id.startsWith('bank-sector-') ? '' : next.release_id)
             setWindowStart(next.start)
             setWindowEnd(next.end)
             const refreshed = await api.factorCatalog({ page: 1, pageSize: 1, query: next.factor_id })
@@ -307,7 +309,7 @@ export default function App() {
     setFactorJob(null)
     window.localStorage.removeItem(FACTOR_JOB_STORAGE_KEY)
     setFactorError('')
-    if (factor.latest_release_id) {
+    if (factor.observation_level !== 'SECTOR' && factor.latest_release_id) {
       selectRelease(factor.latest_release_id)
     } else {
       setReleaseId('')
@@ -471,21 +473,22 @@ export default function App() {
         onBatchClear={() => setBatchSelected({})} />
 
       {batchMode ? <FactorBatchPanel selected={batchSelected} onFinished={() => setCatalogRefresh((value) => value + 1)} /> :
-      <div className="workspace">
+      <div className={`workspace ${sectorSelected ? 'factor-values-only' : ''}`}>
         <div className="configuration">
           <section className="panel release-panel">
-            <div className="section-head"><span>01</span><div><h2>选择本次运行因子</h2><p>从上面的目录选一个因子。未计算的先生成数值，完成后直接进入 M4；每个新因子都有自己的独立版本。</p></div></div>
+            <div className="section-head"><span>01</span><div><h2>选择本次运行因子</h2><p>从上面的目录选一个因子。按所选因子的脚本准备数据并计算；银行依赖自动处理，结果保留版本和缺口。</p></div></div>
             {!selectedFactor && <div className="run-target-empty">请先在上面的因子卡片中点击“选择并计算这个因子”。</div>}
             {selectedFactor && <div className="run-target">
-              <div><span>{selectedFactor.source_collection === 'ALPHA158' ? 'ALPHA158' : selectedFactor.source_collection === 'JQDATA' ? 'JQDATA' : selectedFactor.source_collection === 'BANK' ? '银行因子' : '自定义因子'}</span><h3>{selectedFactor.chinese_name}</h3><code>{selectedFactor.external_name || selectedFactor.factor_id} · v{selectedFactor.factor_version}</code></div>
+              <div><span>{selectedFactor.source_collection === 'ALPHA158' ? 'ALPHA158' : selectedFactor.source_collection === 'JQDATA' ? 'JQDATA' : selectedFactor.source_collection === 'BANK' ? '银行因子' : selectedFactor.source_collection === 'BANK_TIMING' ? '银行板块择时' : '自定义因子'}</span><h3>{selectedFactor.chinese_name}</h3><code>{selectedFactor.external_name || selectedFactor.factor_id} · v{selectedFactor.factor_version}</code></div>
               <b className={selectedFactor.accuracy_status === 'FAIL' ? 'failed' : selectedFactor.calculated ? 'ready' : ''}>{selectedFactor.status_label}</b>
             </div>}
             {selectedFactor && <div className="factor-compute-box">
               {factorError && <div className="factor-compute-error"><b>未开始计算</b><span>{factorError}</span></div>}
-              <p>{selectedFactor.calculated ? '已有历史计算结果。可修改日期重新计算；新结果发布为独立版本，旧版本仍可复现。M4 检验需在新版本上重新运行。' : '这个因子目前只有公式，还没有因子值。先按你设定的日期范围单独计算并发布。'}</p>
+              <p>{sectorSelected ? '按交易日生成板块因子值；银行数据准备自动完成，覆盖不足保留空值和原因。已有匹配版本可复用。' : selectedFactor.calculated ? '已有历史计算结果。可修改日期重新计算；新结果发布为独立版本，旧版本仍可复现。M4 检验需在新版本上重新运行。' : '这个因子目前只有公式，还没有因子值。先按你设定的日期范围单独计算并发布。'}</p>
               <div className="compute-dates"><Field label="计算开始"><input type="date" disabled={factorSubmitting || factorJob?.status === 'RUNNING'} value={windowStart} onChange={(event) => changeFactorDate('start', event.target.value)} /></Field><Field label="计算结束"><input type="date" disabled={factorSubmitting || factorJob?.status === 'RUNNING'} value={windowEnd} onChange={(event) => changeFactorDate('end', event.target.value)} /></Field></div>
               <button className="primary compute-button" disabled={factorSubmitting || factorJob?.status === 'RUNNING' || !windowStart || !windowEnd || windowEnd < windowStart} onClick={calculateSelectedFactor}>{factorSubmitting ? '正在提交任务…' : factorJob?.status === 'RUNNING' ? '因子正在计算中…' : selectedFactor.calculated ? '按此日期重新计算并发布新版本' : '计算并发布这个因子'}</button>
               {factorSubmitting && !factorJob && <div className="compute-status running"><div><b>正在提交任务</b><strong>请稍候</strong></div><i><span className="indeterminate" /></i><small>正在连接计算后端，成功后会立即显示任务编号和进度。</small></div>}
+              {factorJob?.log_tail && <details className="log"><summary>查看计算日志</summary><pre>{factorJob.log_tail}</pre></details>}
               {factorJob && <div className={`compute-status ${factorJob.accuracy_status === 'FAIL' ? 'fail' : factorJob.result?.calculation?.mode === 'FULL_AFTER_MISMATCH' ? 'mismatch' : factorJob.status.toLowerCase()}`}>
                 <div><b>{factorJob.status === 'RUNNING' || factorJob.accuracy_status === 'PENDING' || factorJob.accuracy_status === 'FAIL' ? factorJob.phase : factorJob.status === 'PASS' ? '计算完成' : factorJob.status === 'FAIL' ? '计算失败' : '已停止'}</b><strong>{factorJob.progress}%</strong></div>
                 <i><span style={{ width: `${factorJob.progress}%` }} /></i>
@@ -493,6 +496,7 @@ export default function App() {
                 <footer><code>{factorJob.job_id}</code><span>已运行 {formatDuration(factorJob.elapsed_seconds)}</span>{factorJob.status === 'RUNNING' && <button onClick={stopFactorCalculation}>停止计算</button>}</footer>
               </div>}
             </div>}
+            {sectorSelected && (factorJob?.release_id || selectedFactor?.latest_release_id) && <FactorValueDetails key={factorJob?.release_id || selectedFactor?.latest_release_id} releaseId={(factorJob?.release_id || selectedFactor?.latest_release_id)!} factorId={selectedFactor!.factor_id} />}
             {release && <div className="release-summary">
               <div className="release-factor-name"><strong>{releaseFactorNames(release)}</strong><span>本次历史版本包含的因子</span></div><div><strong>{release.instrument_count.toLocaleString()}</strong><span>股票</span></div><div><strong>{release.session_count.toLocaleString()}</strong><span>交易日</span></div>
               <button onClick={() => setFactorOpen((value) => !value)}>{factorOpen ? '收起名单' : '查看因子名单'} <b>{factorOpen ? '−' : '+'}</b></button>
@@ -501,7 +505,7 @@ export default function App() {
             <details className="history-release"><summary>历史批次复现入口</summary><select value={releaseId} onChange={(event) => { setSelectedFactor(null); selectRelease(event.target.value) }}><option value="">请选择历史版本</option>{options?.factor_releases.map((item) => <option key={item.release_id} value={item.release_id}>{releaseFactorNames(item)} · {item.start} → {item.end} · {compactId(item.release_id)}</option>)}</select></details>
           </section>
 
-          <section className="panel">
+          {!sectorSelected && <><section className="panel">
             <div className="section-head"><span>02</span><div><h2>选择要跑的检验</h2><p>4.6 可以先不跑；若后续步骤依赖前置步骤，预检会明确列出来。</p></div></div>
             <div className="stage-grid">
               {STAGES.map((stage) => {
@@ -539,10 +543,10 @@ export default function App() {
               <Field label="滑点上限 (bps)"><input type="number" value={maxSlippage} onChange={(event) => setMaxSlippage(Number(event.target.value))} /></Field>
             </div>}
             {executionSelected && <div className="capital-preview">将测试 {payload.capital_scenarios_cny.map(money).join(' / ')} 元资金规模。4.6 使用日线成交代理，结果是容量压力测试，不是逐笔撮合。</div>}
-          </section>
+          </section></>}
         </div>
 
-        <aside className="run-console">
+        {!sectorSelected && <aside className="run-console">
           <div className="console-head"><span>LIVE RUN</span><h2>运行控制</h2><p>{job?.status === 'RUNNING' ? '本次任务正在运行' : preflight ? '本次任务已预检，等待启动' : '当前还没有启动本次运行'}</p></div>
           <div className="summary-row"><span>因子</span><b>{release?.factor_count ?? '—'} 个</b></div>
           <div className="summary-row"><span>持仓</span><b>{holding} 日</b></div>
@@ -576,7 +580,7 @@ export default function App() {
               {lastJob.explorer_available && <a href={api.explorerUrl(lastJob.job_id)} target="_blank">打开上次 M4.7 证据页 ↗</a>}
             </div>
           </details>}
-        </aside>
+        </aside>}
       </div>}
       </> : <FactorAssetLibrary />}
     </main>
