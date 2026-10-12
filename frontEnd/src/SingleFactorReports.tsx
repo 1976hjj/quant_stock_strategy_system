@@ -12,6 +12,30 @@ const STATUS_NAMES: Record<StrategyJobHistory['status'], string> = {
   QUEUED: '等待队列中', RUNNING: '回测中', PASS: '已完成', FAIL: '失败', STOPPED: '已停止',
 }
 
+type SortKey = 'created_at' | 'rebalance_sessions' | 'total_return' | 'excess_return' | 'maximum_drawdown' | 'sharpe'
+type SortOrder = 'asc' | 'desc'
+
+function sortValue(job: StrategyJobHistory, key: SortKey): number | null {
+  const value = key === 'created_at' ? (job.created_at ? Date.parse(job.created_at) : null)
+    : key === 'rebalance_sessions' ? (job.request && 'rebalance_sessions' in job.request ? job.request.rebalance_sessions : null)
+    : job.result_summary?.[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function compareJobs(left: StrategyJobHistory, right: StrategyJobHistory, key: SortKey, order: SortOrder): number {
+  const a = sortValue(left, key)
+  const b = sortValue(right, key)
+  // Missing results remain last in either direction; ties keep a deterministic order.
+  if (a === null && b !== null) return 1
+  if (a !== null && b === null) return -1
+  if (a !== null && b !== null && a !== b) return order === 'asc' ? a - b : b - a
+  const leftTime = sortValue(left, 'created_at')
+  const rightTime = sortValue(right, 'created_at')
+  if (leftTime === null && rightTime !== null) return 1
+  if (leftTime !== null && rightTime === null) return -1
+  return (rightTime ?? 0) - (leftTime ?? 0) || left.job_id.localeCompare(right.job_id)
+}
+
 function pct(value: number | null | undefined) {
   return value == null ? '—' : `${(value * 100).toFixed(2)}%`
 }
@@ -124,6 +148,7 @@ export default function SingleFactorReports({ onOpenRunning }: { onOpenRunning: 
   const [source, setSource] = useState('ALL')
   const [category, setCategory] = useState('ALL')
   const [selectedDay, setSelectedDay] = useState('')
+  const [sort, setSort] = useState<{ key: SortKey; order: SortOrder }>({ key: 'created_at', order: 'desc' })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [refreshedAt, setRefreshedAt] = useState('')
@@ -162,7 +187,19 @@ export default function SingleFactorReports({ onOpenRunning }: { onOpenRunning: 
     if (category !== 'ALL' && meta?.category !== category) return false
     if (selectedDay && runDay(job.created_at) !== selectedDay) return false
     return true
-  }), [jobs, factors, query, source, category, selectedDay])
+  }).sort((left, right) => compareJobs(left, right, sort.key, sort.order)), [jobs, factors, query, source, category, selectedDay, sort])
+
+  const sortHeader = (key: SortKey, label: string) => {
+    const active = sort.key === key
+    const nextOrder = active && sort.order === 'desc' ? 'asc' : 'desc'
+    const direction = active ? (sort.order === 'desc' ? '降序' : '升序') : '未排序'
+    return <span><button className={`single-sort-button ${active ? 'active' : ''}`}
+      onClick={() => setSort({ key, order: nextOrder })}
+      aria-label={`${label}，${direction}；点击按${nextOrder === 'desc' ? '降序' : '升序'}排序`}
+      title={key === 'maximum_drawdown' ? '按回撤数值排序，降序时较小亏损在前；缺失值始终在末尾' : '点击切换升降序；缺失值始终在末尾'}>
+      {label}<i aria-hidden="true">{active ? (sort.order === 'desc' ? '↓' : '↑') : '↕'}</i>
+    </button></span>
+  }
 
   const toggleDetail = async (jobId: string) => {
     if (expanded === jobId) { setExpanded(''); return }
@@ -247,7 +284,7 @@ export default function SingleFactorReports({ onOpenRunning }: { onOpenRunning: 
     {error && <div className="strategy-error"><b>读取失败</b><span>{error}</span><button onClick={() => setError('')}>×</button></div>}
     {!loading && !error && visible.length === 0 && <div className="history-empty"><b>还没有符合条件的单因子回测</b><span>在“因子策略”中只选择一个评分因子运行，完成后会自动归档到这里。</span></div>}
     {visible.length > 0 && <div className="history-table single-factor-table">
-      <div className="single-factor-head"><span>对比</span><span>因子 / 运行时间</span><span>回测区间</span><span>股票池</span><span>调仓</span><span>累计收益</span><span>超额收益</span><span>最大回撤</span><span>夏普</span><span>状态</span><span /></div>
+      <div className="single-factor-head"><span>对比</span>{sortHeader('created_at', '因子 / 运行时间')}<span>回测区间</span><span>股票池</span>{sortHeader('rebalance_sessions', '调仓')}{sortHeader('total_return', '累计收益')}{sortHeader('excess_return', '超额收益')}{sortHeader('maximum_drawdown', '最大回撤')}{sortHeader('sharpe', '夏普')}<span>状态</span><span /></div>
       {visible.map((job) => { const meta = factors.get(factorId(job)); const picked = selected.includes(job.job_id); return <div className={`history-table-item ${job.status.toLowerCase()} ${picked ? 'compare-selected' : ''}`} key={job.job_id}>
         <div className="single-factor-row">
           <button className={`compare-toggle ${picked ? 'active' : ''}`} disabled={job.status !== 'PASS' || (!picked && selected.length >= 4)} onClick={() => toggleCompare(job)} title="加入结果对比">{picked ? '✓' : '+'}</button>

@@ -840,6 +840,11 @@ select:focus, input:focus { border-color: #4b946f; box-shadow: 0 0 0 3px rgba(20
 .single-filters > span { color: #87918b; font-size: 9px; white-space: nowrap; }
 .single-factor-head, .single-factor-row { display: grid; grid-template-columns: 38px minmax(205px,1.4fr) 110px minmax(90px,.7fr) 62px repeat(4,minmax(68px,.55fr)) minmax(88px,.68fr) 96px; align-items: center; gap: 10px; }
 .single-factor-head { min-height: 38px; padding: 0 16px; border-bottom: 1px solid #dfe4df; background: #f0f3ed; color: #7b8580; font-size: 8px; font-weight: 650; }
+.single-sort-button { display: inline-flex; align-items: center; gap: 4px; padding: 6px 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; white-space: nowrap; }
+.single-sort-button i { font-style: normal; opacity: .55; }
+.single-sort-button.active, .single-sort-button:hover { color: #176347; }
+.single-sort-button.active i { opacity: 1; }
+.single-sort-button:focus-visible { outline: 2px solid #176347; outline-offset: 3px; border-radius: 3px; }
 .single-factor-row { min-height: 82px; padding: 0 16px; }
 .single-factor-row > span { min-width: 0; color: #48534d; font-size: 9px; }
 .single-factor-row > span small { display: block; margin-top: 5px; color: #919994; font: 8px 'DM Mono'; }
