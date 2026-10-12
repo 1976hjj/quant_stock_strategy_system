@@ -35,6 +35,7 @@ export interface DataSource {
 }
 
 export interface DataInventory {
+  maintenance?: DataMaintenance
   today: string
   latest_complete_day: string
   groups: DataGroup[]
@@ -58,12 +59,35 @@ export interface DataUpdateRequest {
 export interface DataPlan {
   source_id?: 'tushare' | 'eastmoney' | 'industry'
   target_end: string
-  stages: Array<{ id: string; name: string; current_end: string | null; needs_update: boolean; requires_token?: boolean }>
+  stages: Array<{ id: string; name: string; current_end: string | null; needs_update: boolean; requires_token?: boolean; refresh_recent_periods?: number }>
   required_unselected: string[]
   token_available: boolean
   token_required?: boolean
   can_start?: boolean
   strategy_ready_if_complete: boolean
+}
+
+export interface DataMaintenance {
+  checked_at: string
+  weekly_schedule: string
+  next_weekly_at: string
+  interval_days: number
+  long_unused_days: number
+  official_reports_status: string
+  update_prompt: string
+  update_prompt_scope?: 'bank_reports'
+  ledger: Array<{ id: string; name: string; source_id: string; coverage_end: string | null;
+    last_success_at: string | null; days_since_success: number | null;
+    state: 'missing' | 'long_unused' | 'due' | 'current'; next_check_at: string | null }>
+}
+
+export interface DataHistory {
+  items: Array<{ job_id: string; source_id: string; groups: string[]; target_end: string; status: string;
+    updated_at: string | null; error?: string; completed_groups: number; total_groups: number }>
+  page: number
+  page_size: number
+  total_items: number
+  total_pages: number
 }
 
 export interface DataJob {
@@ -99,6 +123,7 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
 }
 
 export const dataApi = {
+  history: (page = 1) => call<DataHistory>(`/data/history?page=${page}&page_size=10`),
   inventory: () => call<DataInventory>('/data/inventory'),
   plan: (request: DataUpdateRequest) => call<DataPlan>('/data/plan', request),
   start: (request: DataUpdateRequest) => call<DataJob>('/data/jobs', request),
