@@ -1130,6 +1130,7 @@ select:focus, input:focus { border-color: #4b946f; box-shadow: 0 0 0 3px rgba(20
 .qs-selected-mark { display: grid; place-items: center; flex: 0 0 21px; height: 21px; margin-top: 2px; border-radius: 50%; color: #fff; background: #18704b; font-size: 10px; }
 .qs-selected-mark[aria-hidden="true"] { visibility: hidden; }
 .qs-candidate-period { font: 9.5px 'DM Mono', monospace; color: #829087; white-space: nowrap; }
+.qs-candidate-variant { color: #63786a; font-size: 9.5px; font-weight: 400; }
 .qs-candidate-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding-top: 2px; }
 .qs-candidate-metrics > span { display: grid; gap: 6px; }
 .qs-candidate-metrics small { font-size: 9.5px; font-weight: 400; color: #78867d; }
@@ -1158,6 +1159,13 @@ select:focus, input:focus { border-color: #4b946f; box-shadow: 0 0 0 3px rgba(20
 .qs-metrics small { color: #7a877f; font-size: 10px; }
 .qs-metrics b { font: 500 21px 'DM Mono', monospace; letter-spacing: -.04em; }
 .qs-facts { display: flex; gap: 8px; flex-wrap: wrap; margin: 18px 0; }
+.qs-count-switch { display: flex; align-items: center; gap: 12px; margin: 12px 0 18px; }
+.qs-count-switch > span { color: #718579; font-size: 10px; }
+.qs-count-switch > div { display: inline-flex; gap: 3px; padding: 3px; border: 1px solid #d9e5dc; border-radius: 10px; background: #f1f5ef; }
+.qs-page .qs-count-switch button { min-height: 30px; min-width: 62px; padding: 5px 16px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #62786b; font-size: 11px; font-weight: 500; box-shadow: none; transform: none; transition: color .15s, background-color .15s, border-color .15s; }
+.qs-page .qs-count-switch button:hover { background: #e4ede3; color: #294d39; }
+.qs-page .qs-count-switch button[aria-pressed="true"] { border-color: #caddcf; background: #fff; color: #1e6042; box-shadow: 0 1px 4px rgba(26, 55, 37, .07); }
+.qs-page .qs-count-switch button:focus-visible { outline: 2px solid #7bad8c; outline-offset: 2px; }
 .qs-facts span { padding: 7px 10px; border-radius: 7px; background: #eef4ec; color: #587160; font-size: 10px; }
 .qs-curve { width: 100%; min-height: 260px; display: block; }
 .qs-curve text { fill: #687e73; font: 11px sans-serif; }

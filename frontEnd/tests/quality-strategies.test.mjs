@@ -223,7 +223,8 @@ test('real component switches categories, displays evidence, submits holdings an
   assert.equal(tree.root.findAllByType('svg').length, 1)
   await act(async () => { button(tree.root, '银行').props.onClick(); await Promise.resolve() })
   assert.match(text(tree), /银行质量股息/)
-  assert.match(text(tree), /招商银行/)
+  assert.doesNotMatch(text(tree), /模型参考持仓|最近信号的目标组合／数量差额|招商银行/)
+  assert.match(text(tree), /行情截至/)
   assert.match(text(tree), /晚采财务不回填历史/)
   assert.match(text(tree), /2,000,000/)
   await act(async () => { button(tree.root, '因子加权').props.onClick(); await Promise.resolve() })
@@ -409,4 +410,59 @@ test('history input-gap warning exposes recorded cash periods without claiming s
     assert.match(period, /2个交易日/)
     assert.match(note.findByType('b').children.join(''), /空仓不能直接解释为成功避险/)
   } finally { if (tree) await act(async () => tree.unmount()) }
+})
+
+test('five and ten stock variants switch independent results and restore the selected variant', async () => {
+  const originalWindow = globalThis.window
+  const storage = new Map()
+  globalThis.window = { ...originalWindow, localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) } }
+  const variants = [10, 5].map(count => ({ ...items[2], strategy_id: `factor-sharpe-quarter${count}`,
+    name: `季度${count}股`, target_count: count, schedule: 'QUARTER', allocation: 'INVERSE_RESVOL', calculation_state: 'UP_TO_DATE' }))
+  const requests = []
+  globalThis.fetch = async url => {
+    const path = String(url).split('/api/v1/')[1]
+    requests.push(path)
+    if (path === 'quality-strategies') return { ok: true, json: async () => ({ categories: [{ id: 'FACTOR_WEIGHTED', name: '因子加权' }], items: variants }) }
+    const item = variants.find(row => path.endsWith(row.strategy_id))
+    const summary = { total_return: item.target_count === 5 ? .25 : .5 }
+    return { ok: true, json: async () => ({ ...detail(item), daily: [], signal: { calculation_mode: 'FULL_LOCAL_REBUILD_V3',
+      as_of: '2026-10-14', signal_date: '2026-09-30', due: false, target_exposure: .882, warnings: [],
+      input_bindings: [], execution_note: '', historical_replay: { summary, annual: [],
+        daily: [{ session: '2026-01-02', nav: 100 }, { session: '2026-10-14', nav: item.target_count === 5 ? 125 : 150 }] } } }) }
+  }
+  let tree
+  try {
+    await act(async () => { tree = renderer.create(React.createElement(QualityStrategies)); await Promise.resolve() })
+    const variantNav = () => tree.root.findByProps({ 'aria-label': '持股数量切换' })
+    const candidates = () => tree.root.findByProps({ className: 'qs-candidates' }).findAllByType('button')
+    const categoryCount = () => tree.root.findByProps({ 'aria-label': '策略分类' }).findByType('small').children.join('')
+    assert.equal(candidates().length, 1)
+    assert.equal(categoryCount(), '1')
+    assert.equal(candidates()[0].findByProps({ className: 'qs-candidate-heading' }).findByType('b').children.join(''), '季度')
+    assert.match(candidates()[0].findByProps({ className: 'qs-candidate-variant' }).children.join(''), /当前10股/)
+    assert.deepEqual(variantNav().findAllByType('button').map(b => b.children.join('')), ['5股', '10股'])
+    assert.match(text(tree), /50.00%/)
+    await act(async () => { variantNav().findAllByType('button')[0].props.onClick(); await Promise.resolve() })
+    assert.equal(variantNav().findAllByType('button')[0].props['aria-pressed'], true)
+    assert.equal(candidates().length, 1)
+    assert.equal(candidates()[0].props['aria-pressed'], true)
+    assert.match(candidates()[0].findByProps({ className: 'qs-candidate-variant' }).children.join(''), /当前5股/)
+    const beforeReselect = requests.length
+    await act(async () => { candidates()[0].props.onClick(); await Promise.resolve() })
+    assert.equal(requests.length, beforeReselect)
+    assert.match(text(tree), /25.00%/)
+    assert.doesNotMatch(text(tree), /50.00%/)
+    assert.equal(tree.root.findAllByType('svg').length, 1)
+    assert.equal(JSON.parse(storage.get('alpha-research.quality-selection')).strategy_id, 'factor-sharpe-quarter5')
+    await act(async () => tree.unmount())
+    await act(async () => { tree = renderer.create(React.createElement(QualityStrategies)); await Promise.resolve() })
+    assert.equal(variantNav().findAllByType('button')[0].props['aria-pressed'], true)
+    assert.match(text(tree), /25.00%/)
+    await act(async () => { variantNav().findAllByType('button')[1].props.onClick(); await Promise.resolve() })
+    assert.equal(variantNav().findAllByType('button')[1].props['aria-pressed'], true)
+    assert.match(text(tree), /50.00%/)
+    assert.ok(requests.includes('quality-strategies/factor-sharpe-quarter5'))
+    assert.ok(requests.includes('quality-strategies/factor-sharpe-quarter10'))
+    assert.ok(!requests.some(path => path.endsWith('/calculate')))
+  } finally { if (tree) await act(async () => tree.unmount()); globalThis.window = originalWindow }
 })
