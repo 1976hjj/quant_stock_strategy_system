@@ -54,6 +54,7 @@ export interface DataUpdateRequest {
   min_free_gb: number
   sleep_ms: number
   refresh_recent_periods: number
+  bank_update_mode?: 'AUTO' | 'FULL'
 }
 
 export interface DataPlan {
@@ -65,6 +66,7 @@ export interface DataPlan {
   token_required?: boolean
   can_start?: boolean
   strategy_ready_if_complete: boolean
+  bank_refresh?: { refresh_financial: boolean; financial_age_days: number | null; reason: string } | null
 }
 
 export interface DataMaintenance {
@@ -103,6 +105,18 @@ export interface DataJob {
   steps?: number
   error?: string
   log_tail: string
+  started_at?: string
+  updated_at?: string
+  retry_attempt?: number
+  detail?: string
+  stage_id?: string
+  stage_index?: number
+  stage_count?: number
+  stage_completed?: number
+  stage_total?: number | null
+  stage_unit?: string
+  stage_progress?: number | null
+  stages?: Array<{ id: string; name: string; status: 'PENDING' | 'RUNNING' | 'DONE' | 'FAIL'; completed?: number; total?: number | null; unit?: string; reused?: boolean }>
 }
 
 async function call<T>(path: string, body?: unknown): Promise<T> {

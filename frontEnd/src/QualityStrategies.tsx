@@ -1,0 +1,358 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { STRATEGY_API_ROOT } from './strategyApi'
+
+type Metrics = { total_return?: number; annualized_return?: number; maximum_drawdown?: number; sharpe?: number }
+type Day = { session: string; nav: number; cash?: number; positions?: number; daily_return?: number; actual_stock_exposure?: number; dividend_cash?: number; cost?: number; missing_marks?: number; holdings?: Position[] }
+type Job = { job_id: string; status: string; phase?: string; progress?: number; error?: string; created_at?: string; finished_at?: string; current_session?: string; processed_sessions?: number; total_sessions?: number }
+type Position = { ts_code: string; security_name?: string; quantity?: number; close?: number; market_value_cny?: number; cost_basis_cny?: number; average_cost_price?: number; unrealized_pnl_cny?: number; unrealized_pnl_pct?: number; holding_since_session?: string; last_rebalance_session?: string; weight?: number; rank?: number; score?: number }
+type Signal = { calculation_mode?: string; created_at?: string; capital_cny?: number; as_of: string; signal_date: string; next_execution_date?: string | null; due: boolean; target_exposure: number; model_positions: Position[]; targets: Position[]; orders: Array<Position & { current_quantity: number; target_quantity: number; delta_quantity: number; legal_delta_quantity?: number }>; warnings: string[]; input_bindings: Array<{ factor_id: string; end: string; release_id: string }>; historical_replay: { initial_cash_cny?: number; summary: Metrics; daily: Day[]; annual: Array<{ year: number; return: number }> }; execution_note: string }
+type Candidate = { information_clock?: string; calculation_state?: string; latest_calculation_mode?: string; latest_summary?: Metrics | null; latest_as_of?: string | null; released_input_end?: string | null; fixed_exposure?: number | null; strategy_id: string; category: string; version: number; name: string; notes: string; evidence_version: string; target_count: number; rebalance_sessions: number; schedule: string; allocation: string; start: string; end: string; summary: Metrics; evidence_error?: string; latest_job?: Job | null }
+type Detail = Candidate & { initial_cash_cny?: number; daily: Day[]; annual: Array<{ year: number; return: number }>; signal?: Signal | null; request: { minimum_cash_fraction: number; score_rules: Array<{ factor_id: string; direction: string; weight: number }>; universe_segments: string[]; shadow_health: { experiment_variant: string } }; related_evidence: Array<{ label: string; start: string; end: string; summary: Metrics }> }
+
+const SELECTION_STORAGE_KEY = 'alpha-research.quality-selection'
+function savedSelection(): { category: string; strategy_id?: string } {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(SELECTION_STORAGE_KEY) || 'null')
+    if (stored && ['SMALL_CAP', 'BANK', 'FACTOR_WEIGHTED'].includes(stored.category)) {
+      return { category: stored.category, strategy_id: typeof stored.strategy_id === 'string' ? stored.strategy_id : undefined }
+    }
+  } catch { /* Browser storage may be unavailable; default without blocking the page. */ }
+  return { category: 'SMALL_CAP' }
+}
+
+async function request<T>(path: string, payload?: unknown): Promise<T> {
+  const response = await fetch(`${STRATEGY_API_ROOT}/${path}`, payload === undefined ? undefined : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+  const result = await response.json()
+  if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : result.detail ? JSON.stringify(result.detail) : result.error || `请求失败 ${response.status}`)
+  return result as T
+}
+const pct = (v?: number) => v == null ? '—' : `${(v * 100).toFixed(2)}%`
+const num = (v?: number, digits = 2) => v == null ? '—' : v.toLocaleString('zh-CN', { maximumFractionDigits: digits })
+const signedNum = (v?: number) => v == null ? '未记录' : `${v > 0 ? '+' : ''}${num(v)}`
+const isCalculating = (job?: Job | null) => job?.status === 'RUNNING' || job?.status === 'STARTING'
+
+function cashPeriods(daily: Day[]) {
+  const periods: Array<{ start: string; end: string; sessions: number }> = []
+  let current: { start: string; end: string; sessions: number } | null = null
+  for (const day of daily) {
+    if (day.positions === 0) {
+      if (!current) current = { start: day.session, end: day.session, sessions: 0 }
+      current.end = day.session; current.sessions++
+    } else if (current) { if (current.sessions > 1) periods.push(current); current = null }
+  }
+  if (current && current.sessions > 1) periods.push(current)
+  return periods
+}
+
+export function CalculationStatus({ job, hasPreviousResult }: { job: Job; hasPreviousResult: boolean }) {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [job.job_id])
+  const phase = job.phase || '检查本地输入并准备计算'
+  const stage = phase.includes('全量重算历史因子') || phase.includes('整理银行') ? 1
+    : /回测|回放|绩效|信号表/.test(phase) ? 2 : phase.startsWith('检查') ? 0 : /持仓|对账/.test(phase) ? 3 : 0
+  const progress = job.progress == null ? null : Math.min(99, Math.max(0, job.progress))
+  const started = job.created_at ? Date.parse(job.created_at) : NaN
+  const seconds = Number.isFinite(started) ? Math.max(0, Math.floor((now - started) / 1000)) : null
+  const elapsed = seconds == null ? null : seconds < 60 ? `${seconds}秒` : seconds < 3600 ? `${Math.floor(seconds / 60)}分${seconds % 60}秒` : `${Math.floor(seconds / 3600)}小时${Math.floor(seconds % 3600 / 60)}分`
+  return <section className="qs-calculation" aria-label="全量重算运行状态">
+    <div className="qs-calculation-heading"><span className="qs-calculation-spinner" aria-hidden="true" /><div><b>{job.status === 'STARTING' ? '正在启动全量重算' : '正在全量重算'}</b><span role="status" aria-live="polite">{phase}</span></div><strong>{progress == null ? '准备中' : `${progress}%`}</strong></div>
+    <div className={`qs-calculation-track${progress == null ? ' indeterminate' : ''}`} role="progressbar" aria-label="全量重算进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress ?? undefined} aria-valuetext={phase}><i style={progress == null ? undefined : { width: `${progress}%` }} /></div>
+    <div className="qs-calculation-meta">{elapsed && <span>已运行 {elapsed}</span>}{job.current_session && <span>回测处理至 {job.current_session}</span>}{job.total_sessions != null && <span>已处理 {num(job.processed_sessions, 0)} / {num(job.total_sessions, 0)} 个交易日</span>}<span>约每2秒更新任务状态</span></div>
+    <ol className="qs-calculation-steps" aria-label="计算流程">{['检查本地数据', '重建历史因子', '连续账户回测', '最新信号与持仓'].map((name, index) => <li key={name} className={index < stage ? 'done' : index === stage ? 'current' : 'pending'} aria-current={index === stage ? 'step' : undefined}><i>{index < stage ? '✓' : index + 1}</i><span>{name}</span></li>)}</ol>
+    <p>{hasPreviousResult ? '本次计算进行中，下方保留上次成功结果；完成后统一更新曲线与持仓。' : '正在从本地数据重建完整历史；完成后显示曲线和持仓。'} 进度表示计算流程完成度，不是剩余时间预测。</p>
+  </section>
+}
+
+export function Curve({ daily, initialCash }: { daily: Day[]; initialCash?: number }) {
+  const [hovered, setHovered] = useState<number | null>(null)
+  const [pinned, setPinned] = useState(false)
+  const [tooltipLeft, setTooltipLeft] = useState(16)
+  const containerRef = useRef<HTMLDivElement>(null)
+  // Replay slots chronologically, never in cursor traversal order. Continuing
+  // holdings keep their rows; new names take vacated slots, regardless of prices.
+  const holdingRows = useMemo(() => {
+    let slots: Array<string | null> = []
+    return daily.map(day => {
+      if (day.holdings == null) return []
+      const positions = new Map(day.holdings.map(p => [p.ts_code, p]))
+      slots = slots.map(code => code != null && positions.has(code) ? code : null)
+      const retained = new Set(slots)
+      for (const code of [...positions.keys()].sort()) {
+        if (retained.has(code)) continue
+        const empty = slots.indexOf(null)
+        if (empty < 0) slots.push(code)
+        else slots[empty] = code
+      }
+      while (slots.length && slots.at(-1) == null) slots.pop()
+      return slots.map(code => code == null ? null : positions.get(code)!)
+    })
+  }, [daily])
+  const placeTooltip = (next = hovered) => {
+    const rect = containerRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const width = Math.min(720, window.innerWidth - 32)
+    const left = (next ?? 0) > (daily.length - 1) / 2 ? rect.left + 12 : rect.right - width - 12
+    setTooltipLeft(Math.max(16, Math.min(window.innerWidth - width - 16, left)))
+  }
+  useEffect(() => {
+    if (hovered == null) return
+    const reposition = () => placeTooltip()
+    reposition()
+    window.addEventListener('scroll', reposition, true)
+    window.addEventListener('resize', reposition)
+    return () => {
+      window.removeEventListener('scroll', reposition, true)
+      window.removeEventListener('resize', reposition)
+    }
+  }, [hovered != null, hovered != null && hovered > (daily.length - 1) / 2, daily.length])
+  useEffect(() => {
+    if (!pinned) return
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { setPinned(false); setHovered(null) }
+    }
+    window.addEventListener('keydown', dismiss)
+    return () => window.removeEventListener('keydown', dismiss)
+  }, [pinned])
+  const chart = useMemo(() => {
+    if (!daily.length) return null
+    let peak = initialCash && initialCash > 0 ? initialCash : daily[0].nav
+    let compounded = 1
+    const completeReturns = daily.every(d => d.daily_return != null && Number.isFinite(d.daily_return))
+    const values = daily.map(d => d.nav / daily[0].nav)
+    const drawdowns = daily.map(d => { peak = Math.max(peak, d.nav); return d.nav / peak - 1 })
+    const returns = daily.map(d => {
+      if (initialCash && initialCash > 0) return d.nav / initialCash - 1
+      if (!completeReturns) return undefined
+      compounded *= 1 + d.daily_return!
+      return compounded - 1
+    })
+    return { values, drawdowns, returns, low: Math.min(1, ...values), high: Math.max(...values), ddLow: Math.min(-.01, ...drawdowns) }
+  }, [daily, initialCash])
+  if (!daily.length) return <p>暂无可核对的曲线。</p>
+  const { values, drawdowns, returns, low, high, ddLow } = chart!
+  const x = (i: number) => 48 + i / Math.max(1, daily.length - 1) * 884
+  const y = (v: number) => 32 + (high - v) / Math.max(.01, high - low) * 172
+  const dy = (v: number) => 242 + v / ddLow * 65
+  const points = values.map((v, i) => `${x(i)},${y(v)}`).join(' ')
+  const ddPoints = drawdowns.map((v, i) => `${x(i)},${dy(v)}`).join(' ')
+  const index = hovered == null ? null : Math.min(hovered, daily.length - 1)
+  const day = index == null ? null : daily[index]
+  const stockValue = day?.cash == null ? undefined : day.nav - day.cash
+  const exposure = day?.actual_stock_exposure ?? (stockValue != null && day && day.nav > 0 ? stockValue / day.nav : undefined)
+  const shownHoldings = index == null ? [] : holdingRows[index]
+  function pointAt(event: React.PointerEvent<SVGSVGElement>, force = false) {
+    if (pinned && !force) return
+    const rect = event.currentTarget.getBoundingClientRect()
+    const scale = Math.min(rect.width / 980, rect.height / 340)
+    if (scale <= 0) return
+    const px = (event.clientX - rect.left - (rect.width - 980 * scale) / 2) / scale
+    const next = Math.max(0, Math.min(daily.length - 1, Math.round((px - 48) / 884 * (daily.length - 1))))
+    placeTooltip(next)
+    setHovered(next)
+  }
+  const tooltip = day && index != null ? <aside className="qs-curve-tooltip" data-pinned={pinned} style={{ left: tooltipLeft }} role="tooltip">
+      <header><b>{day.session}</b><span>{pinned ? '已固定 · Esc关闭' : '回测账户 · 收盘后 · 单击图表固定'}</span>{pinned && <button type="button" className="qs-tooltip-close" aria-label="关闭持仓明细" onClick={() => { setPinned(false); setHovered(null) }}>×</button>}</header>
+      <dl>{[
+        ['累计收益', pct(returns[index])], ['当日收益', pct(day.daily_return)],
+        ['当前回撤', pct(drawdowns[index])], ['图示净值', num(values[index], 4)],
+        ['初始资金', initialCash == null ? '未记录' : `${num(initialCash)} 元`], ['账户权益', `${num(day.nav)} 元`],
+        ['现金', day.cash == null ? '未记录' : `${num(day.cash)} 元`], ['股票市值', stockValue == null ? '未记录' : `${num(stockValue)} 元`],
+        ['实际股票仓位', pct(exposure)], ['持仓数量', day.positions == null ? '未记录' : `${day.positions} 只`],
+      ].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+      {day.holdings != null ? <div className="qs-tooltip-holdings"><b>当日实际持仓 · 全部 {day.holdings.length} 只</b>{shownHoldings.length > 0 && <div className="qs-holdings-table-wrap"><table aria-label={`${day.session}全部持仓与浮盈亏`}><thead><tr><th>股票</th><th title="本轮从空仓买入该股的成交日；加减仓不会重置，下行单独显示最近买卖日">本轮建仓日 / 最近买卖</th><th>股数 / 成本价</th><th>账户仓位</th><th>市值（元）</th><th>浮盈亏（元）/ 比例</th></tr></thead><tbody>{shownHoldings.map((p, slot) => p == null ? <tr key={`empty-${slot}`} className="qs-holding-empty"><td colSpan={6}>空位 · 已换出</td></tr> : <tr key={p.ts_code}>
+        <td><b>{p.security_name || p.ts_code}</b>{p.security_name && p.security_name !== p.ts_code && <small>{p.ts_code}</small>}</td>
+        <td>{p.holding_since_session || '未记录'}<small>最近买卖 {p.last_rebalance_session || '未记录'}</small></td>
+        <td>{num(p.quantity, 0)} 股<small>成本 {num(p.average_cost_price, 4)}</small></td>
+        <td>{pct(p.market_value_cny == null || day.nav <= 0 ? undefined : p.market_value_cny / day.nav)}</td>
+        <td>{num(p.market_value_cny)}</td>
+        <td className={p.unrealized_pnl_cny == null || p.unrealized_pnl_cny === 0 ? '' : p.unrealized_pnl_cny > 0 ? 'qs-holding-profit' : 'qs-holding-loss'}>{signedNum(p.unrealized_pnl_cny)}<small>{p.unrealized_pnl_pct == null ? '—' : `${p.unrealized_pnl_pct > 0 ? '+' : ''}${pct(p.unrealized_pnl_pct)}`}</small></td>
+      </tr>)}</tbody></table></div>}{!day.holdings.length && <small>空仓</small>}</div> : <p>此版本未保存逐日持仓明细；后续重算会保存。</p>}
+      {!!day.missing_marks && <p>当日有 {day.missing_marks} 只持仓缺少价格，沿用回测估值。</p>}
+      <footer>持仓保留行位，新股票补入空位。本轮建仓日为从空仓买入该股的日期，清仓后再买才重置；加减仓仅更新最近买卖日，分红、送转不计入。单股浮盈亏＝当日市值－剩余持仓成本；成本含买入费用，浮盈亏不含现金分红及预计卖出费用。缺少成本记录时不估算。账户累计收益包含回测已计入的分红与费用，与下方实盘参考资金分开。</footer>
+    </aside> : null
+  return <div className="qs-curve-wrap" ref={containerRef} onPointerLeave={() => { if (!pinned) setHovered(null) }}>
+    <svg className="qs-curve" viewBox="0 0 980 340" role="img" tabIndex={0} aria-label={`净值和回撤曲线，${daily[0].session}至${daily.at(-1)?.session}；悬停查看当天收盘账户，左右方向键切换日期`} onPointerMove={pointAt} onPointerDown={e => { pointAt(e, true); setPinned(value => !value) }} onFocus={() => { placeTooltip(hovered ?? daily.length - 1); if (hovered == null) setHovered(daily.length - 1) }} onBlur={() => { if (!pinned) setHovered(null) }} onKeyDown={e => {
+      if (e.key === 'Escape') { setPinned(false); setHovered(null); return }
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setPinned(value => !value); setHovered(i => i ?? daily.length - 1); return }
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return
+      e.preventDefault()
+      setHovered(i => e.key === 'Home' ? 0 : e.key === 'End' ? daily.length - 1 : Math.max(0, Math.min(daily.length - 1, (i ?? daily.length - 1) + (e.key === 'ArrowLeft' ? -1 : 1))))
+    }}>
+    {[0, .5, 1].map(f => <g key={f}><line x1="48" y1={32 + f * 172} x2="932" y2={32 + f * 172} stroke="#dce5df" /><text x="4" y={37 + f * 172}>{(high - f * (high - low)).toFixed(2)}</text></g>)}
+    <polyline points={points} fill="none" stroke="#176648" strokeWidth="2" />
+    <text x="48" y="226">净值（图示起点＝1）</text>
+    <line x1="48" y1="242" x2="932" y2="242" stroke="#dce5df" />
+    <polyline points={ddPoints} fill="none" stroke="#bd6653" strokeWidth="1.5" />
+    <text x="4" y="246">0%</text><text x="4" y="308">{pct(ddLow)}</text>
+    {index != null && <g className="qs-curve-crosshair"><line x1={x(index)} x2={x(index)} y1="26" y2="311" stroke="#78998a" strokeDasharray="4 4" /><circle cx={x(index)} cy={y(values[index])} r="4" fill="#176648" stroke="#fff" strokeWidth="2" /><circle cx={x(index)} cy={dy(drawdowns[index])} r="3" fill="#bd6653" stroke="#fff" /></g>}
+    {[0, .25, .5, .75, 1].map(f => { const i = Math.round(f * (daily.length - 1)); return <text key={f} x={x(i)} y="330" textAnchor={f === 0 ? 'start' : f === 1 ? 'end' : 'middle'}>{daily[i].session}</text> })}
+    </svg>
+    {tooltip && (typeof document === 'undefined' ? tooltip : createPortal(<div className="qs-page qs-tooltip-layer">{tooltip}</div>, document.body))}
+    <p className="qs-curve-help">悬停查看当日账户；单击图表固定明细，可滚动查看，Esc关闭；左右方向键切换日期。</p>
+  </div>
+}
+
+function MetricCards({ summary }: { summary: Metrics }) {
+  return <div className="qs-metrics">{[['累计收益', pct(summary.total_return)], ['年化收益', pct(summary.annualized_return)], ['最大回撤', pct(summary.maximum_drawdown)], ['夏普', num(summary.sharpe)]].map(([label, value]) => <div key={label}><small>{label}</small><b>{value}</b></div>)}</div>
+}
+
+export default function QualityStrategies() {
+  const [initialSelection] = useState(savedSelection)
+  const [categories, setCategories] = useState<Array<{ id: string; name: string }>>([])
+  const [items, setItems] = useState<Candidate[]>([])
+  const [category, setCategory] = useState(initialSelection.category)
+  const [selected, setSelected] = useState('')
+  const [detail, setDetail] = useState<Detail | null>(null)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [job, setJob] = useState<Job | null>(null)
+  const [capital, setCapital] = useState('1000000')
+  const [asOf, setAsOf] = useState('')
+  const [holdings, setHoldings] = useState('')
+  const [history, setHistory] = useState<Array<{ job_id: string; request?: { name: string }; name?: string }>>([])
+  const [registerOpen, setRegisterOpen] = useState(false)
+  const [registerJob, setRegisterJob] = useState('')
+  const [registerName, setRegisterName] = useState('')
+  const [registerNotes, setRegisterNotes] = useState('')
+  const selectionRef = useRef('')
+  const selectionVersion = useRef(0)
+  const pendingDetail = useRef('')
+
+  function receiveDetail(data: Detail) {
+    setDetail(previous => JSON.stringify(previous) === JSON.stringify(data) ? previous : data)
+    const nextJob = data.latest_job || null
+    setJob(previous => JSON.stringify(previous) === JSON.stringify(nextJob) ? previous : nextJob)
+  }
+
+  async function reload() {
+    const data = await request<{ categories: Array<{ id: string; name: string }>; items: Candidate[] }>('quality-strategies')
+    setCategories(data.categories); setItems(data.items)
+    return data.items
+  }
+  async function choose(sid: string) {
+    if (selectionRef.current === sid && (detail?.strategy_id === sid || pendingDetail.current === sid)) return
+    const version = ++selectionVersion.current
+    selectionRef.current = sid; pendingDetail.current = sid
+    setSelected(sid); setError(''); setLoading(true); setDetailLoading(true)
+    try {
+      const data = await request<Detail>(`quality-strategies/${encodeURIComponent(sid)}`)
+      if (selectionVersion.current !== version) return
+      receiveDetail(data)
+    } catch (e) { if (selectionVersion.current === version) setError(String(e)) }
+    finally { if (selectionVersion.current === version) { pendingDetail.current = ''; setLoading(false); setDetailLoading(false) } }
+  }
+  useEffect(() => {
+    let disposed = false
+    request<{ categories: Array<{ id: string; name: string }>; items: Candidate[] }>('quality-strategies').then(data => {
+      if (disposed) return
+      setCategories(data.categories); setItems(data.items)
+      const first = data.items.find(r => r.strategy_id === initialSelection.strategy_id && r.category === initialSelection.category)
+        || data.items.find(r => r.category === initialSelection.category) || data.items[0]
+      if (first && !selectionRef.current) { setCategory(first.category); void choose(first.strategy_id) }
+    }).catch(e => { if (!disposed) setError(String(e)) })
+    return () => { disposed = true; selectionVersion.current++ }
+  }, [])
+  useEffect(() => {
+    if (!selected) return
+    try { window.localStorage.setItem(SELECTION_STORAGE_KEY, JSON.stringify({ category, strategy_id: selected })) }
+    catch { /* Selection still works when browser storage is disabled. */ }
+  }, [category, selected])
+  useEffect(() => {
+    let disposed = false
+    const timer = window.setInterval(async () => {
+      try {
+        const data = await request<{ categories: Array<{ id: string; name: string }>; items: Candidate[] }>('quality-strategies')
+        if (disposed) return
+        setItems(data.items)
+        const sid = selectionRef.current
+        const version = selectionVersion.current
+        if (sid && !pendingDetail.current) {
+          const current = await request<Detail>(`quality-strategies/${encodeURIComponent(sid)}`)
+          if (!disposed && selectionVersion.current === version) receiveDetail(current)
+        }
+      } catch (e) { if (!disposed) setError(String(e)) }
+    }, 30000)
+    return () => { disposed = true; window.clearInterval(timer) }
+  }, [])
+  useEffect(() => {
+    if (!isCalculating(job)) return
+    let disposed = false
+    const sid = selected, jid = job!.job_id, version = selectionVersion.current
+    if (detail?.strategy_id !== sid || pendingDetail.current) return
+    const timer = window.setInterval(() => {
+      request<Job>(`quality-strategies/jobs/${encodeURIComponent(jid)}`).then(async next => {
+        if (disposed || selectionVersion.current !== version) return
+        setJob(next)
+        if (next.status === 'PASS') {
+          const data = await request<Detail>(`quality-strategies/${encodeURIComponent(sid)}`)
+          // PASS stops this timer effect; its final detail read still belongs
+          // to this selection. Unmount / a new selection invalidates version.
+          if (selectionVersion.current === version) { receiveDetail(data); void reload() }
+        }
+        if (next.status === 'FAIL') setError(next.error || '计算失败，请检查输入和日志')
+      }).catch(e => { if (!disposed && selectionVersion.current === version) setError(String(e)) })
+    }, 2000)
+    return () => { disposed = true; window.clearInterval(timer) }
+  }, [job?.job_id, job?.status, selected, detail?.strategy_id, detailLoading])
+
+  async function calculate() {
+    setError(''); setLoading(true)
+    const sid = selected, version = selectionVersion.current
+    try {
+      const current = holdings.trim() ? holdings.trim().split(/\n/).filter(line => line.trim()).map(line => {
+        const parts = line.trim().split(/[\s,，]+/)
+        if (parts.length !== 2 || !/^\d{6}\.(SH|SZ)$/i.test(parts[0]) || !/^\d+$/.test(parts[1])) throw new Error('持仓每行填写沪深证券代码和非负整数股数，例如 600036.SH 1000。')
+        const [code, quantity] = parts
+        return { ts_code: code.toUpperCase(), quantity: Number(quantity) }
+      }) : []
+      const result = await request<Job>(`quality-strategies/${encodeURIComponent(sid)}/calculate`, { as_of: asOf || null, capital_cny: Number(capital), current_holdings: current })
+      if (selectionVersion.current === version) setJob(result)
+    } catch (e) { if (selectionVersion.current === version) setError(String(e)) }
+    finally { if (selectionVersion.current === version) setLoading(false) }
+  }
+  async function showRegister() {
+    setRegisterOpen(!registerOpen)
+    try { const data = await request<{ jobs: Array<{ job_id: string; status: string; request?: { name: string }; name?: string }> }>('strategy/jobs?kind=history'); setHistory(data.jobs.filter(j => j.status === 'PASS')) }
+    catch (e) { setError(String(e)) }
+  }
+  async function register() {
+    setLoading(true); setError('')
+    try {
+      const data = await request<Detail>('quality-strategies', { job_id: registerJob, category, name: registerName, notes: registerNotes })
+      await reload(); setRegisterOpen(false); await choose(data.strategy_id)
+    } catch (e) { setError(String(e)) }
+    finally { setLoading(false) }
+  }
+  const signal = detail?.signal?.calculation_mode === 'FULL_LOCAL_REBUILD_V3' ? detail.signal : null
+  const curve = signal?.historical_replay
+  const needsRebuild = detail?.calculation_state !== 'UP_TO_DATE'
+  const calculationLabel = (state?: string) => state === 'UP_TO_DATE' ? '全量重算已更新' : state === 'STALE' ? '来源或规则变化，待重算' : '待全量重算'
+  const replayCoverageWarnings = signal?.warnings.filter(w => w.includes('历史质量覆盖缺口')) || []
+  const historicalCashPeriods = useMemo(() => cashPeriods(curve?.daily || []), [curve?.daily])
+  return <main className="qs-page">
+    <div className="qs-heading"><div><span className="eyebrow">STRATEGY NOTEBOOK</span><h1>优质策略</h1><p>按类别保留策略规则和历史证据，计算最新模型参考持仓与调仓数量。</p></div><div className="qs-actions"><button onClick={() => reload().catch(e => setError(String(e)))}>刷新列表</button><button className="primary" aria-expanded={registerOpen} onClick={() => void showRegister()}>记录已有策略</button></div></div>
+    <div className="qs-tabs qs-category-tabs" aria-label="策略分类">{categories.map(c => <button aria-pressed={category === c.id} className={category === c.id ? 'active' : ''} key={c.id} onClick={() => { setCategory(c.id); const first = items.find(r => r.category === c.id); if (first) void choose(first.strategy_id) }}>{c.name}<small>{items.filter(r => r.category === c.id).length}</small></button>)}</div>
+    {error && <div className="error-banner" role="alert">{error}</div>}
+    {registerOpen && <section className="qs-panel qs-register"><div className="qs-register-heading"><div><h2>记录完成的历史回测</h2><p>保存独立证据副本，原历史记录删除或变化不会覆盖本页记录。归类不代表研究认证通过。</p></div><button onClick={() => setRegisterOpen(false)}>收起</button></div><div className="qs-register-fields"><label>回测记录<select value={registerJob} onChange={e => { setRegisterJob(e.target.value); const h = history.find(x => x.job_id === e.target.value); setRegisterName(h?.request?.name || h?.name || '') }}><option value="">选择已有完成记录</option>{history.map(h => <option key={h.job_id} value={h.job_id}>{h.request?.name || h.name || h.job_id} · {h.job_id}</option>)}</select></label><label>策略名称<input placeholder="为这项策略取一个便于识别的名称" value={registerName} onChange={e => setRegisterName(e.target.value)} /></label><label className="qs-register-notes">保留理由／局限<textarea placeholder="记录保留理由，以及适用范围和已知局限" value={registerNotes} onChange={e => setRegisterNotes(e.target.value)} /></label></div><div className="qs-register-footer"><span>保存分类：{categories.find(c => c.id === category)?.name}</span><button className="primary" disabled={loading || !registerJob || !registerName.trim()} onClick={() => void register()}>记录到{categories.find(c => c.id === category)?.name}</button></div></section>}
+    <div className="qs-layout"><aside className="qs-candidates">{items.filter(r => r.category === category).map(r => <button key={r.strategy_id} aria-pressed={selected === r.strategy_id} className={`qs-candidate${selected === r.strategy_id ? ' selected' : ''}${isCalculating(selected === r.strategy_id && detail?.strategy_id === r.strategy_id ? job : r.latest_job) ? ' calculating' : ''}`} onClick={() => void choose(r.strategy_id)}><span className="qs-candidate-heading"><b>{r.name}</b><small className="qs-selected-mark" aria-hidden={selected !== r.strategy_id} aria-label={selected === r.strategy_id ? '当前查看' : undefined}>✓</small></span><span className="qs-candidate-period">{r.start} → {r.latest_calculation_mode === 'FULL_LOCAL_REBUILD_V3' ? r.latest_as_of : r.end}</span><span className="qs-candidate-metrics"><span><small>上次全量年化</small><b>{pct(r.latest_calculation_mode === 'FULL_LOCAL_REBUILD_V3' ? r.latest_summary?.annualized_return : undefined)}</b></span><span><small>最大回撤</small><b className="qs-drawdown">{pct(r.latest_calculation_mode === 'FULL_LOCAL_REBUILD_V3' ? r.latest_summary?.maximum_drawdown : undefined)}</b></span></span>{r.latest_summary && r.latest_calculation_mode === 'FULL_LOCAL_REBUILD_V3' && <span className="qs-candidate-replay"><small>复算至 {r.latest_as_of}</small><span>年化 {pct(r.latest_summary.annualized_return)} · 回撤 {pct(r.latest_summary.maximum_drawdown)}</span></span>}<span className="qs-candidate-footer"><small>{isCalculating(selected === r.strategy_id && detail?.strategy_id === r.strategy_id ? job : r.latest_job) ? '正在全量重算' : calculationLabel(r.calculation_state)}</small><small>版本 {r.version}</small></span></button>)}</aside>
+      <div className="qs-detail" aria-busy={detailLoading}>{detailLoading && detail && <div className="qs-detail-loading" role="status">正在读取 {items.find(r => r.strategy_id === selected)?.name || '策略'}…</div>}{detail && detail.strategy_id !== selected && !detailLoading && <p className="qs-warning" role="status">当前选择未能读取，以下仍是 {detail.name} 的内容。</p>}<div className="qs-detail-content" inert={detailLoading || (!!detail && detail.strategy_id !== selected) || undefined}>{!detail ? <section className="qs-panel qs-detail-placeholder" aria-label="策略详情加载区"><p>{error ? '策略读取失败，请重新选择重试。' : '正在读取策略证据…'}</p>{!error && <div className="qs-placeholder-lines" aria-hidden="true"><i /><i /><i /></div>}</section> : <>
+        <section className="qs-panel"><h2>{detail.name}</h2><p>{detail.notes}</p>{detail.evidence_error && <div role="alert" className="error-banner">证据不能读取：{detail.evidence_error}</div>}<div className="qs-facts"><span>{detail.target_count}只股票</span>{detail.information_clock && <span>收盘后决策，次日执行</span>}<span>{detail.schedule === 'QUARTER' ? '自然季度末' : `${detail.rebalance_sessions}交易日`}选股</span><span>{detail.allocation === 'INVERSE_RESVOL' ? '风险倒数分权' : '等权'}</span><span>{detail.fixed_exposure != null ? `固定股票目标 ${pct(detail.fixed_exposure * (1 - detail.request.minimum_cash_fraction))}` : detail.request.shadow_health.experiment_variant === 'S0' ? '不启用影子择时' : `影子 ${detail.request.shadow_health.experiment_variant}`}</span></div>
+          {isCalculating(job) && <CalculationStatus job={job!} hasPreviousResult={!!signal} />}<div className="qs-rebuild-heading"><b>最近全量重算</b><span className={needsRebuild ? 'qs-update-needed' : 'qs-update-ready'}>{isCalculating(job) ? '本次更新中' : calculationLabel(detail.calculation_state)}</span></div>
+          <p>每次点击计算，从当前本地来源重建全部历史因子输入，再回测和生成持仓。</p>
+          {needsRebuild && <p className="qs-warning">{signal ? '来源、公式或规则已变化，下面是上次全量结果；请重算后再用于当前决策。' : '尚无全量重算结果。旧版回放和归档不作为当前结果，请在下方点击全量重算。'}</p>}
+          {signal && <><p>{detail.start} → {signal.as_of} · 计算时间 {signal.created_at ? new Date(signal.created_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '—'}</p>{replayCoverageWarnings.length > 0 && <div className="qs-history-gap" role="note"><b>历史财务输入存在缺口，空仓不能直接解释为成功避险</b><p>财务输入不足可能使回测选股为空；这会影响收益和回撤，需补齐当时可用的财报证据后再评价策略。</p>{historicalCashPeriods.length > 0 && <div>{historicalCashPeriods.map(period => <span key={period.start}>回测空仓：{period.start} → {period.end} · {period.sessions}个交易日</span>)}</div>}</div>}<MetricCards summary={curve?.summary || {}} /><Curve daily={curve?.daily || []} initialCash={curve?.initial_cash_cny} /><div className="qs-years">{curve?.annual?.map(y => <div key={y.year}><small>{y.year}</small><b>{pct(y.return)}</b></div>)}</div>{replayCoverageWarnings.map((w, i) => <p className="qs-warning" key={i}>{w}</p>)}</>}
+          <details className="qs-history-evidence"><summary>历史归档与对照（仅供追溯）</summary><p>{detail.start} → {detail.end}；这是原记录的数据版本，不代表当前数据的结果。</p><MetricCards summary={detail.summary} /><Curve daily={detail.daily} initialCash={detail.initial_cash_cny} /><div className="qs-years">{detail.annual.map(y => <div key={y.year}><small>{y.year}</small><b>{pct(y.return)}</b></div>)}</div>{detail.related_evidence.map(r => <p key={r.label}><b>{r.label}</b> {r.start} → {r.end}：累计 {pct(r.summary.total_return)}，回撤 {pct(r.summary.maximum_drawdown)}</p>)}</details>
+          <details><summary>选股因子与冻结权重</summary><table><thead><tr><th>因子</th><th>方向</th><th>权重</th></tr></thead><tbody>{detail.request.score_rules.map(r => <tr key={r.factor_id}><td>{r.factor_id}</td><td>{r.direction === 'HIGH' ? '高值优先' : '低值优先'}</td><td>{pct(r.weight / detail.request.score_rules.reduce((s, x) => s + x.weight, 0))}</td></tr>)}</tbody></table></details>
+        </section>
+        <section className="qs-panel"><h2>最新信号与持仓计算</h2>{detail.released_input_end && <p className="qs-warning">银行财务输入当前开放至 {detail.released_input_end}。未开放的日期会阻断计算，不会把旧持仓当成今天的结果。</p>}<p>按本地可用数据计算。资金为账户总权益；留空持仓表示新建仓参考，填写持仓后显示数量差额。不会自动下单。</p><div className="qs-inputs"><label>账户总权益（元）<input type="number" disabled={isCalculating(job)} min="1" value={capital} onChange={e => setCapital(e.target.value)} /></label><label>计算截至日<input type="date" disabled={isCalculating(job)} value={asOf} onChange={e => setAsOf(e.target.value)} /><small>留空使用本地行情最新日，输入不足会明确报错。</small></label></div><label>当前持仓（可留空）<textarea disabled={isCalculating(job)} placeholder={'每行：证券代码 股数\n例如 600036.SH 1000'} value={holdings} onChange={e => setHoldings(e.target.value)} /></label><button className="primary" disabled={loading || isCalculating(job) || !!detail.evidence_error} onClick={() => void calculate()}>{isCalculating(job) ? '正在计算…' : '全量重算／更新最新信号'}</button>{job && !isCalculating(job) && <p role="status">{job.status === 'RUNNING' ? `${job.phase || '正在计算'} ${num(job.progress, 0)}%` : job.status === 'FAIL' ? `计算失败：${job.error}` : detail.calculation_state === 'UP_TO_DATE' ? '全量重算完成，结果已保存' : '此前结果已保存，仍需完成当前全量重算'}</p>}
+          {signal && <><div className="qs-facts"><span>行情截至 {signal.as_of}</span><span>本次计算资金 {num(signal.capital_cny, 0)} 元</span><span>最近选股信号 {signal.signal_date}</span><span>目标股票仓位 {pct(signal.target_exposure)}</span><span>{signal.due ? '存在下个交易日待执行信号' : '当前不是调仓信号日'}</span></div><p>{signal.execution_note}</p>{signal.warnings.map((w, i) => <p className="qs-warning" key={i}>{w}</p>)}<h3>模型参考持仓</h3><table><thead><tr><th>股票</th><th>模型股数</th><th>参考收盘价</th><th>模型市值</th></tr></thead><tbody>{signal.model_positions.map(p => <tr key={p.ts_code}><td>{p.security_name || p.ts_code}<small>{p.ts_code}</small></td><td>{num(p.quantity, 0)}</td><td>{num(p.close)}</td><td>{num(p.market_value_cny)}</td></tr>)}</tbody></table><h3>最近信号的目标组合／数量差额</h3><table><thead><tr><th>股票</th><th>参考权重</th><th>当前股数</th><th>目标股数</th><th>数量差额</th><th>交易单位参考量</th></tr></thead><tbody>{signal.orders.map(p => <tr key={p.ts_code}><td>{p.security_name || p.ts_code}<small>{p.ts_code}</small></td><td>{pct(p.weight)}</td><td>{num(p.current_quantity, 0)}</td><td>{num(p.target_quantity, 0)}</td><td>{p.delta_quantity > 0 ? '+' : ''}{num(p.delta_quantity, 0)}</td><td>{p.legal_delta_quantity != null && p.legal_delta_quantity > 0 ? '+' : ''}{num(p.legal_delta_quantity, 0)}</td></tr>)}</tbody></table><details><summary>输入版本与截止日期</summary><ul>{signal.input_bindings.map(b => <li key={b.factor_id}>{b.factor_id} · 截至 {b.end} · {b.release_id.slice(0, 22)}</li>)}</ul></details></>}
+        </section>
+      </>}</div></div>
+    </div>
+  </main>
+}

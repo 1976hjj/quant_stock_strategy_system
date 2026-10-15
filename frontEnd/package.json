@@ -6,17 +6,20 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 8872",
     "build": "tsc -b && vite build",
-    "preview": "vite preview --host 127.0.0.1 --port 8872"
+    "preview": "vite preview --host 127.0.0.1 --port 8872",
+    "test:quality": "vite build --ssr src/QualityStrategies.tsx --outDir .quality-test-build && node --test tests/quality-strategies.test.mjs",
+    "test:data-progress": "vite build --ssr src/DataUpdateProgress.tsx --outDir .quality-test-build/data-progress && node --test tests/data-progress.test.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
-    "vite": "latest",
-    "typescript": "latest",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "typescript": "latest",
+    "vite": "latest"
   },
   "devDependencies": {
     "@types/react": "latest",
-    "@types/react-dom": "latest"
+    "@types/react-dom": "latest",
+    "react-test-renderer": "^19.3.0"
   }
 }

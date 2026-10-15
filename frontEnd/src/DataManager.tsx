@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { dataApi } from './dataApi'
 import DataMaintenance from './DataMaintenance'
+import DataUpdateProgress from './DataUpdateProgress'
 import type { DataInventory, DataJob, DataPlan, DataUpdateRequest } from './dataApi'
 
 function dateLabel(value: string | null) { return value || '尚无记录' }
@@ -14,6 +15,7 @@ export default function DataManager() {
   const [industryTarget, setIndustryTarget] = useState('')
   const [industryWorkers, setIndustryWorkers] = useState(2)
   const [industryFreeGb, setIndustryFreeGb] = useState(10)
+  const [industryMode, setIndustryMode] = useState<'AUTO' | 'FULL'>('AUTO')
   const [target, setTarget] = useState('')
   const [workers, setWorkers] = useState(2)
   const [freeGb, setFreeGb] = useState(10)
@@ -83,6 +85,7 @@ export default function DataManager() {
   const industryRequest: DataUpdateRequest = {
     source_id: 'industry', end: industryTarget, groups: selectedIndustries, factor_ids: [],
     workers: industryWorkers, min_free_gb: industryFreeGb, sleep_ms: 50, refresh_recent_periods: 4,
+    bank_update_mode: industryMode,
   }
   const prepareIndustry = async () => {
     setBusy(true); setError('')
@@ -131,13 +134,13 @@ export default function DataManager() {
           <div><label htmlFor={`industry-${group.id}`} className="data-group-name"><b>{group.name}</b><em>Tushare 主源 · 免费补缺</em></label><p>{group.description}</p><small>{group.bank_count}/{group.expected_banks} 家银行 · 同步核验截至 {dateLabel(group.end)}</small><div className="bank-data-summary">{group.datasets.map((item) => <span key={item.id}>{({ market: '行情与估值', financial: '基本面与财务', corporate: '分红与送转' } as Record<string,string>)[item.id]}：{dateLabel(item.start)} → {dateLabel(item.end)} · {item.partitions.toLocaleString()} 条</span>)}</div>{group.audit && <small>核验：采用指标来源完整 · {group.audit.implemented_unique_events} 个去重后的分红实施事件 · {group.audit.bps_source_differences_over_001} 个每股净资产跨源差异标记待核；历史首次披露版本尚未认证。</small>}<small>最近采集：{group.last_collected_at ? new Date(group.last_collected_at).toLocaleString('zh-CN', {hour12:false}) : '尚未采集'}；历史首次披露版本仍需核验。</small></div>
         </div>)}</div>
         {freeBank && <div className="bank-data-summary"><b>免费补充：资产质量、资本与净息差</b><span>{freeBank.bank_count ?? 0}/{freeBank.expected_banks ?? 42} 家银行 · {(freeBank.history_rows ?? 0).toLocaleString()} 条财报记录 · 财报期 {dateLabel(freeBank.start)} → {dateLabel(freeBank.end)}</span><span>最近采集：{freeBank.last_collected_at ? new Date(freeBank.last_collected_at).toLocaleString('zh-CN', {hour12:false}) : '尚未采集'} · {freeBank.quality_label}</span></div>}
-        <div className="data-update-settings"><div className="data-section-title"><div><h3>行业数据 · 同步参数</h3><p>仅同步上方勾选的行业，参数独立于通用数据。银行接口最多并发 2 路，免费补充数据随行业统一更新。</p></div></div>
-        <div className="data-settings"><label>行业更新至<input type="date" max={inventory.latest_complete_day} value={industryTarget} disabled={job?.status === 'RUNNING'} onChange={(event) => { setIndustryTarget(event.target.value); setIndustryPlan(null) }} /></label><label>行业并发请求<input type="number" min="1" max="2" value={industryWorkers} disabled={job?.status === 'RUNNING'} onChange={(event) => { setIndustryWorkers(Number(event.target.value)); setIndustryPlan(null) }} /></label><label>磁盘安全下限 GiB<input type="number" min="1" max="500" value={industryFreeGb} disabled={job?.status === 'RUNNING'} onChange={(event) => { setIndustryFreeGb(Number(event.target.value)); setIndustryPlan(null) }} /></label></div>
-        <div className="data-actions"><button onClick={() => void prepareIndustry()} disabled={busy || job?.status === 'RUNNING' || !selectedIndustries.length || !industryTarget}>检查行业更新计划</button><button className="primary" onClick={() => void startIndustry()} disabled={busy || job?.status === 'RUNNING' || !industryPlan?.can_start}>开始行业增量同步</button></div>
+        <div className="data-update-settings"><div className="data-section-title"><div><h3>行业数据 · 同步参数</h3><p>仅同步上方勾选的行业，参数独立于通用数据。银行接口最多并发2路。日常增量复用近期财务；新财报、分红公告或更正发布时请选完整检查。</p></div></div>
+        <div className="data-settings"><label>更新方式<select value={industryMode} disabled={job?.status === 'RUNNING'} onChange={event => { setIndustryMode(event.target.value as 'AUTO' | 'FULL'); setIndustryPlan(null) }}><option value="AUTO">日常增量 · 财务每7天检查</option><option value="FULL">完整检查 · 财务／分红／免费源</option></select></label><label>行业更新至<input type="date" max={inventory.latest_complete_day} value={industryTarget} disabled={job?.status === 'RUNNING'} onChange={(event) => { setIndustryTarget(event.target.value); setIndustryPlan(null) }} /></label><label>行业并发请求<input type="number" min="1" max="2" value={industryWorkers} disabled={job?.status === 'RUNNING'} onChange={(event) => { setIndustryWorkers(Number(event.target.value)); setIndustryPlan(null) }} /></label><label>磁盘安全下限 GiB<input type="number" min="1" max="500" value={industryFreeGb} disabled={job?.status === 'RUNNING'} onChange={(event) => { setIndustryFreeGb(Number(event.target.value)); setIndustryPlan(null) }} /></label></div>
+        {industryPlan?.bank_refresh && <p className="data-notification-note">本次计划：{industryPlan.bank_refresh.reason}；{industryPlan.bank_refresh.refresh_financial ? '采集行情、财务、分红及免费补充源' : '仅采集行情与估值，财务和分红复用已有版本'}。</p>}<div className="data-actions"><button onClick={() => void prepareIndustry()} disabled={busy || job?.status === 'RUNNING' || !selectedIndustries.length || !industryTarget}>检查行业更新计划</button><button className="primary" onClick={() => void startIndustry()} disabled={busy || job?.status === 'RUNNING' || !industryPlan?.can_start}>开始行业增量同步</button></div>
         {industryPlan && <div className="data-plan"><b>行业数据 · 截至 {industryPlan.target_end}</b>{!industryPlan.can_start && <p>需要配置有效的 Tushare Token。</p>}{industryPlan.stages.map((stage) => <p key={stage.id}>{stage.name}：{stage.needs_update ? '增量更新行情，复查近期财报及分红，保留旧版本' : '已完成本日采集和目标日期核验'}</p>)}</div>}
         </div>
       </section>
-      {job && <section className="data-panel data-job"><div className="data-section-title"><span>03</span><div><h2>最近一次更新</h2><p>{job.request.source_id === 'industry' ? '银行行业专项 · Token优先' : job.request.source_id === 'eastmoney' ? '东方财富 · 免费公开数据' : '通用数据更新'} · 任务 {job.job_id}</p></div></div><div className="data-job-status"><b className={job.status.toLowerCase()}>{job.status === 'RUNNING' ? '运行中' : job.status === 'PASS' ? '已完成' : '失败'}</b><span>{job.phase} · {job.completed_groups ?? 0}/{job.total_groups ?? '—'} 组</span><strong>{job.progress}%</strong></div><div className="data-progress"><i style={{ width: `${job.progress}%` }} /></div>{job.error && <p className="data-alert error">{job.error}</p>}<details><summary>查看运行日志</summary><pre>{job.log_tail || '暂无日志'}</pre></details></section>}
+      {job && <DataUpdateProgress job={job} />}
     </>}
   </main>
 }
