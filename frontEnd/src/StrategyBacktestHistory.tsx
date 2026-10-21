@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { strategyApi } from './strategyApi'
 import ShadowTimeline from './ShadowTimeline'
 import { EquityChart } from './StrategyBacktest'
+import ChartTimeRange, { useChartTimeRange } from './ChartTimeRange'
+import { TakeProfitResults } from './QualityStrategies'
 import type { StrategyJob, StrategyJobHistory, StrategyTrade, UniverseSegment } from './strategyApi'
 
 function percent(value: number | null | undefined) {
@@ -164,18 +166,22 @@ function YearlyTransactions({ jobId, annual, available }: { jobId: string; annua
   </section>
 }
 
-function RotationComparison({ result }: { result: NonNullable<StrategyJob['result']> }) {
+export function RotationComparison({ result }: { result: NonNullable<StrategyJob['result']> }) {
+  const timeRange = useChartTimeRange(result.daily.map(d => d.session))
   if (!result.rotation || result.daily.length < 2) return null
   const series = [
     { id: 'joint', name: '轮动账户', values: result.daily.map((item) => item.nav / result.daily[0].nav - 1) },
-    ...result.rotation.candidate_shadows.map((shadow) => ({ id: shadow.candidate_id, name: shadow.name, values: shadow.daily.map((item) => item.nav / shadow.daily[0].nav - 1) })),
+    ...result.rotation.candidate_shadows.map((shadow) => {
+      const bySession = new Map(shadow.daily.map(row => [row.session, row.nav / shadow.daily[0].nav - 1]))
+      return { id: shadow.candidate_id, name: shadow.name, values: result.daily.map(row => bySession.get(row.session)) }
+    }),
   ]
-  const all = series.flatMap((item) => item.values)
-  const low = Math.min(0, ...all); const high = Math.max(0, ...all)
-  const x = (index: number) => 20 + index / (result.daily.length - 1) * 960
+  const all = series.flatMap((item) => item.values.slice(timeRange.start, timeRange.end + 1)).filter((v): v is number => v != null)
+  const low = Math.min(...all); const high = Math.max(...all)
+  const x = (index: number) => 20 + (index - timeRange.start) / Math.max(1, timeRange.end - timeRange.start) * 960
   const y = (value: number) => 12 + (high - value) / (high - low || 1) * 176
   const colors = ['#176a48', '#72915f', '#c07743', '#5a76a5', '#8d5b91']
-  return <section className="rotation-history-chart"><h3>轮动净值与候选影子净值</h3><div className="rotation-chart-legend">{series.map((item, index) => <span key={item.id}><i style={{ background: colors[index % colors.length] }} />{item.name} <b>{percent(item.values.at(-1))}</b></span>)}</div><svg viewBox="0 0 1000 205" preserveAspectRatio="none" role="img" aria-label="轮动账户与候选组合收益走势"><line x1="20" x2="980" y1={y(0)} y2={y(0)} />{series.map((item, seriesIndex) => <polyline key={item.id} style={{ stroke: colors[seriesIndex % colors.length] }} points={item.values.map((value, index) => `${x(index)},${y(value)}`).join(' ')} />)}</svg><div className="rotation-switch-list">{result.rotation.decisions.filter((item) => item.switched).slice(-20).map((item) => <span key={item.signal_session}><b>{item.signal_session}</b> → {item.active_candidate_id}<small>次日 {item.execution_session} 执行 · 目标 {item.target_stock_count}只</small></span>)}</div></section>
+  return <section className="rotation-history-chart"><h3>轮动净值与候选影子净值</h3><div className="rotation-chart-legend">{series.map((item, index) => <span key={item.id}><i style={{ background: colors[index % colors.length] }} />{item.name} <b>{percent(item.values.at(-1))}</b></span>)}</div><svg viewBox="0 0 1000 205" preserveAspectRatio="none" role="img" aria-label="轮动账户与候选组合收益走势">{low <= 0 && high >= 0 && <line x1="20" x2="980" y1={y(0)} y2={y(0)} />}{series.map((item, seriesIndex) => <polyline key={item.id} style={{ stroke: colors[seriesIndex % colors.length] }} points={item.values.slice(timeRange.start, timeRange.end + 1).map((value, index) => value == null ? '' : `${x(index + timeRange.start)},${y(value)}`).filter(Boolean).join(' ')} />)}</svg><ChartTimeRange sessions={result.daily.map(d => d.session)} values={result.daily.map(d => d.nav)} start={timeRange.start} end={timeRange.end} onChange={timeRange.change} /><div className="rotation-switch-list">{result.rotation.decisions.filter((item) => item.switched).slice(-20).map((item) => <span key={item.signal_session}><b>{item.signal_session}</b> → {item.active_candidate_id}<small>次日 {item.execution_session} 执行 · 目标 {item.target_stock_count}只</small></span>)}</div></section>
 }
 
 function HistoryShadowTimeline({ result }: { result: NonNullable<StrategyJob['result']> }) {
@@ -212,6 +218,7 @@ export function StrategyHistoryDetail({ job }: { job: StrategyJob }) {
       <div className="history-universe"><dt>股票池范围</dt><dd title={universeScope(request)}>{universeScope(request)}</dd></div>
       {factorRequest && <div><dt>持股 / 保留排名</dt><dd>{factorRequest.target_count} / {factorRequest.retention_rank}</dd></div>}
       {factorRequest && <div><dt>调仓间隔</dt><dd>{factorRequest.rebalance_sessions} 个交易日</dd></div>}
+      {factorRequest && <div><dt>个股止盈</dt><dd>{factorRequest.take_profit_policy === 'GAIN_50_CLEAR' ? '盈利50%清仓' : '不加止盈'}</dd></div>}
       {factorRequest && <div><dt>最低上市天数</dt><dd>{factorRequest.minimum_listed_sessions} 个交易日</dd></div>}
       {factorRequest && <div><dt>排除 ST</dt><dd>{factorRequest.exclude_st ? '开启' : '关闭'}</dd></div>}
       {factorRequest && <div><dt>选股序列口径</dt><dd>{factorRequest.selection_sequence_mode === 'MODEL_TARGETS' ? '模型目标序列（实验共用）' : '实际持仓序列（原逻辑）'}</dd></div>}
@@ -236,6 +243,7 @@ export function StrategyHistoryDetail({ job }: { job: StrategyJob }) {
     </dl></section>}
     {result?.shadow_health?.experiment_variant === 'S4V3' && <HistoryShadowTimeline result={result} />}
     {result && <HistoryEquityChart result={result} />}
+    {result && <TakeProfitResults result={result.take_profit} schedule="下次正常调仓" />}
     {factorRequest?.shadow_health && !['S0', 'S4V3'].includes(factorRequest.shadow_health.experiment_variant) && <section><h3>历史实验配置</h3><p>这是已归档的 {factorRequest.shadow_health.experiment_variant} 回测。完整旧参数保存在下方原始 JSON 报告中。</p></section>}
     {rotationRequest && <section><h3>候选组合与因子</h3><div className="detail-rules">{rotationRequest.candidates.map((candidate) => <div key={candidate.candidate_id}><b>{candidate.name}</b><span>{candidate.score_rules.map((rule) => `${rule.factor_id}（${rule.direction === 'HIGH' ? '高' : '低'}）`).join(' · ')} · 持股 {candidate.target_count}</span></div>)}</div></section>}
     {result?.rotation && <section><h3>轮动执行</h3><dl><div><dt>判断次数</dt><dd>{result.rotation.decision_count}</dd></div><div><dt>实际切换</dt><dd>{result.rotation.switch_count}</dd></div><div><dt>当前组合</dt><dd>{result.rotation.decisions.at(-1)?.active_candidate_id || '—'}</dd></div></dl></section>}

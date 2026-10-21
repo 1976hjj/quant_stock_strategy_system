@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { strategyApi } from './strategyApi'
 import ShadowTimeline from './ShadowTimeline'
+import { TakeProfitResults } from './QualityStrategies'
+import ChartTimeRange, { useChartTimeRange } from './ChartTimeRange'
 import type { FilterRule, ScoreRule, ShadowHealthSpec, ShadowHealthVariant, StrategyFactorOption, StrategyJob, StrategyOptions, StrategyPreflight, StrategyPreview, StrategyRequest, UniverseSegment } from './strategyApi'
 
 const DEFAULT_SCORE = ['jqdata-earnings-to-price-ratio', 'jqdata-cash-earnings-to-price-ratio']
@@ -82,30 +84,34 @@ export function EquityChart({ daily, benchmark, drawdown, hoverDate, onHoverDate
   hoverDate?: string | null
   onHoverDate?: (date: string | null) => void
 }) {
+  const timeRange = useChartTimeRange(daily.map(d => d.session))
   if (daily.length < 2) return null
   const strategy = daily.map((item) => ({ session: item.session, value: item.nav / daily[0].nav - 1 }))
+  const visibleStrategy = strategy.slice(timeRange.start, timeRange.end + 1)
+  const visibleDaily = daily.slice(timeRange.start, timeRange.end + 1)
   const benchmarkBySession = new Map(benchmark?.daily.map((item) => [item.session, item.return]) || [])
-  const benchmarkValues = strategy.map((item) => benchmarkBySession.get(item.session)).filter((item): item is number => item != null)
-  const values = [...strategy.map((item) => item.value), ...benchmarkValues, 0]
+  const benchmarkValues = visibleStrategy.map((item) => benchmarkBySession.get(item.session)).filter((item): item is number => item != null)
+  const values = [...visibleStrategy.map((item) => item.value), ...benchmarkValues]
   const rawStep = (Math.max(...values) - Math.min(...values) || .1) / 4
   const power = 10 ** Math.floor(Math.log10(rawStep))
   const step = [1, 2, 5, 10].find((candidate) => rawStep <= candidate * power)! * power
   const yMin = Math.floor(Math.min(...values) / step) * step
   const yMax = Math.ceil(Math.max(...values) / step) * step
   const left = 54; const right = 12; const top = 20; const bottom = 32; const width = 1000 - left - right; const height = 240 - top - bottom
-  const x = (index: number) => left + index / (daily.length - 1) * width
+  const x = (index: number) => left + (index - timeRange.start) / Math.max(1, timeRange.end - timeRange.start) * width
   const y = (value: number) => top + (yMax - value) / (yMax - yMin || 1) * height
-  const polyline = (series: Array<number | undefined>) => series.map((value, index) => value == null ? '' : `${x(index)},${y(value)}`).filter(Boolean).join(' ')
+  const polyline = (series: Array<number | undefined>) => series.slice(timeRange.start, timeRange.end + 1).map((value, index) => value == null ? '' : `${x(index + timeRange.start)},${y(value)}`).filter(Boolean).join(' ')
   const yTicks = Array.from({ length: Math.round((yMax - yMin) / step) + 1 }, (_, index) => yMin + index * step)
-  const years = daily.reduce<Array<{ label: string; index: number }>>((items, item, index) => {
+  const years = visibleDaily.reduce<Array<{ label: string; index: number }>>((items, item, index) => {
     const label = item.session.slice(0, 4)
-    return !items.length || items.at(-1)?.label !== label ? [...items, { label, index }] : items
+    return !items.length || items.at(-1)?.label !== label ? [...items, { label, index: index + timeRange.start }] : items
   }, [])
   const peakIndex = drawdown ? daily.findIndex((item) => item.session === drawdown.peak_session) : -1
   const recoveryIndex = drawdown ? daily.findIndex((item) => item.session === drawdown.recovery_session) : -1
   const drawdownEnd = recoveryIndex >= 0 ? recoveryIndex : daily.length - 1
-  const hoverIndex = hoverDate ? daily.findIndex((item) => item.session === hoverDate) : -1
-  const selectedIndex = hoverIndex >= 0 ? hoverIndex : daily.length - 1
+  const foundHoverIndex = hoverDate ? daily.findIndex((item) => item.session === hoverDate) : -1
+  const hoverIndex = foundHoverIndex >= timeRange.start && foundHoverIndex <= timeRange.end ? foundHoverIndex : -1
+  const selectedIndex = hoverIndex >= 0 ? hoverIndex : timeRange.end
   const selected = daily[selectedIndex]
   const selectedStrategyReturn = strategy[selectedIndex].value
   const selectedBenchmarkReturn = benchmarkBySession.get(selected.session)
@@ -119,13 +125,15 @@ export function EquityChart({ daily, benchmark, drawdown, hoverDate, onHoverDate
     if (!onHoverDate) return
     const bounds = event.currentTarget.getBoundingClientRect()
     const relative = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width))
-    const index = Math.max(0, Math.min(daily.length - 1, Math.round((relative * 1000 - left) / width * (daily.length - 1))))
+    const index = Math.max(timeRange.start, Math.min(timeRange.end, timeRange.start + Math.round((relative * 1000 - left) / width * (timeRange.end - timeRange.start))))
     onHoverDate(daily[index].session)
   }
   const peakToRecoveryDays = drawdown?.peak_to_recovery_calendar_days ?? (drawdown?.recovery_session ? Math.round((new Date(drawdown.recovery_session).getTime() - new Date(drawdown.peak_session).getTime()) / 86_400_000) : 0)
   const recoveredText = drawdown?.recovered
     ? `最大回撤区间：${drawdown.peak_to_recovery_sessions} 个交易日 / ${peakToRecoveryDays} 天`
     : '最大回撤尚未恢复'
+  const markerStart = Math.max(timeRange.start, peakIndex)
+  const markerEnd = Math.min(timeRange.end, drawdownEnd)
   return <div className="strategy-chart">
     <div className="strategy-chart-legend"><span className="strategy-line">策略 {percent(strategy.at(-1)?.value)}</span>{benchmark && <span className="benchmark-line">沪深300 {percent(benchmark.summary.total_return)}</span>}</div>
     <div className="strategy-chart-hover" aria-live="polite">
@@ -141,12 +149,13 @@ export function EquityChart({ daily, benchmark, drawdown, hoverDate, onHoverDate
     </div>
     <svg viewBox="0 0 1000 240" preserveAspectRatio="none" role="img" onMouseMove={onMove} onMouseLeave={() => onHoverDate?.(null)} aria-label="策略与沪深300累计收益走势">
       {yTicks.map((tick) => <g className="chart-y-tick" key={tick}><line x1={left} x2={1000 - right} y1={y(tick)} y2={y(tick)} /><text x={left - 7} y={y(tick) + 3} textAnchor="end">{percent(tick)}</text></g>)}
-      {years.map((item) => <g className="chart-x-tick" key={item.label}><line x1={x(item.index)} x2={x(item.index)} y1={top} y2={top + height} /><text x={x(item.index)} y={232} textAnchor={item.index === 0 ? 'start' : 'middle'}>{item.label}</text></g>)}
+      {years.map((item) => <g className="chart-x-tick" key={item.label}><line x1={x(item.index)} x2={x(item.index)} y1={top} y2={top + height} /><text x={x(item.index)} y={232} textAnchor={item.index === timeRange.start ? 'start' : 'middle'}>{item.label}</text></g>)}
       {benchmark && <polyline className="benchmark-series" points={polyline(strategy.map((item) => benchmarkBySession.get(item.session)))} />}
       <polyline className="strategy-series" points={polyline(strategy.map((item) => item.value))} />
       {hoverIndex >= 0 && <line className="shadow-cursor" x1={x(hoverIndex)} x2={x(hoverIndex)} y1={top} y2={top + height} />}
-      {drawdown && peakIndex >= 0 && <g className="drawdown-marker"><line x1={x(peakIndex)} x2={x(drawdownEnd)} y1="10" y2="10" /><line x1={x(peakIndex)} x2={x(peakIndex)} y1="7" y2="14" /><line x1={x(drawdownEnd)} x2={x(drawdownEnd)} y1="7" y2="14" /><text x={(x(peakIndex) + x(drawdownEnd)) / 2} y="7" textAnchor="middle">{recoveredText}</text></g>}
+      {drawdown && peakIndex >= 0 && markerStart <= markerEnd && <g className="drawdown-marker"><line x1={x(markerStart)} x2={x(markerEnd)} y1="10" y2="10" /><line x1={x(markerStart)} x2={x(markerStart)} y1="7" y2="14" /><line x1={x(markerEnd)} x2={x(markerEnd)} y1="7" y2="14" /><text x={(x(markerStart) + x(markerEnd)) / 2} y="7" textAnchor="middle">{recoveredText}</text></g>}
     </svg>
+    <ChartTimeRange sessions={daily.map(d => d.session)} values={strategy.map(d => d.value)} start={timeRange.start} end={timeRange.end} onChange={window => { timeRange.change(window); onHoverDate?.(null) }} />
     {drawdown && <div className="strategy-chart-note"><span>最大回撤 {percent(drawdown.drawdown)}：峰值 {drawdown.peak_session} → 低点 {drawdown.trough_session}</span><b>{drawdown.recovered ? `低点后 ${drawdown.recovery_sessions} 个交易日恢复于 ${drawdown.recovery_session}` : '截至回测结束未恢复'}</b></div>}
   </div>
 }
@@ -176,6 +185,7 @@ export default function StrategyBacktest() {
   const [targetCount, setTargetCount] = useState(50)
   const [retentionRank, setRetentionRank] = useState(75)
   const [rebalanceSessions, setRebalanceSessions] = useState(5)
+  const [takeProfitPolicy, setTakeProfitPolicy] = useState<'NONE' | 'GAIN_50_CLEAR'>('NONE')
   const [initialCash, setInitialCash] = useState(1_000_000)
   const [cashReserve, setCashReserve] = useState(2)
   const [buyFee, setBuyFee] = useState(3)
@@ -216,6 +226,7 @@ export default function StrategyBacktest() {
         if (typeof draft.target_count === 'number') setTargetCount(draft.target_count)
         if (typeof draft.retention_rank === 'number') setRetentionRank(draft.retention_rank)
         if (typeof draft.rebalance_sessions === 'number') setRebalanceSessions(draft.rebalance_sessions)
+        setTakeProfitPolicy(draft.take_profit_policy === 'GAIN_50_CLEAR' ? 'GAIN_50_CLEAR' : 'NONE')
         if (typeof draft.initial_cash_cny === 'number') setInitialCash(draft.initial_cash_cny)
         if (typeof draft.minimum_cash_fraction === 'number') setCashReserve(draft.minimum_cash_fraction * 100)
         if (typeof draft.buy_commission_bps === 'number') setBuyFee(draft.buy_commission_bps)
@@ -273,8 +284,8 @@ export default function StrategyBacktest() {
     minimum_cash_fraction: cashReserve / 100, buy_commission_bps: buyFee, sell_commission_bps: sellFee,
     sell_stamp_duty_bps: stampDuty, base_slippage_bps: slippage, square_root_impact_bps: impact,
     maximum_slippage_bps: 100, maximum_participation_rate: participation / 100,
-    shadow_health: shadowHealth,
-  }), [name, start, end, universeSegments, selectionSequenceMode, scoreRules, filterRules, excludeSt, excludeAbnormalStatus, listedSessions, targetCount, retentionRank, rebalanceSessions, initialCash, cashReserve, buyFee, sellFee, stampDuty, slippage, impact, participation, shadowHealth])
+    shadow_health: shadowHealth, take_profit_policy: takeProfitPolicy,
+  }), [name, start, end, universeSegments, selectionSequenceMode, scoreRules, filterRules, excludeSt, excludeAbnormalStatus, listedSessions, targetCount, retentionRank, rebalanceSessions, initialCash, cashReserve, buyFee, sellFee, stampDuty, slippage, impact, participation, shadowHealth, takeProfitPolicy])
 
   useEffect(() => {
     if (draftRestored) window.localStorage.setItem(STRATEGY_DRAFT_STORAGE_KEY, JSON.stringify(payload))
@@ -337,6 +348,7 @@ export default function StrategyBacktest() {
       </div>)}<button className="add-rule" onClick={addFilter}>＋ 添加过滤规则</button></div>}</section>
 
       <section className="strategy-panel"><header><span>04</span><div><h2>持仓、调仓与成本</h2><p>信号在收盘后形成，下一交易日开盘尝试成交。</p></div></header><div className="strategy-fields compact">
+        <label><span>个股止盈</span><select value={takeProfitPolicy} onChange={e => { setTakeProfitPolicy(e.target.value as 'NONE' | 'GAIN_50_CLEAR'); resetResults() }}><option value="NONE">不加止盈</option><option value="GAIN_50_CLEAR">盈利50%清仓</option></select></label>
         <label><span>目标持股数</span><input type="number" value={targetCount} onChange={(e) => setTargetCount(Number(e.target.value))} /></label>
         <label><span>保留排名</span><input type="number" value={retentionRank} onChange={(e) => setRetentionRank(Number(e.target.value))} /></label>
         <label><span>每几日调仓</span><input type="number" min="1" max="126" value={rebalanceSessions} onChange={(e) => setRebalanceSessions(Number(e.target.value))} /></label>
@@ -418,6 +430,7 @@ export default function StrategyBacktest() {
         </div>
       </div>
       <ResultCharts result={result} />
+      <TakeProfitResults result={result.take_profit} schedule="下次正常调仓" />
       <div className="annual-results">{result.annual.map((item) => <div key={item.year}><span>{item.year}</span><b>{percent(item.return)}</b></div>)}</div>
       {result.shadow_health && <div className="risk-result">
         <h3>影子策略健康仓位结果 · {result.shadow_health.experiment_variant}</h3>

@@ -174,6 +174,7 @@ export interface ShadowHealthSpec {
 }
 
 export interface StrategyRequest {
+  take_profit_policy?: 'NONE' | 'GAIN_50_CLEAR'
   name: string
   start: string
   end: string
@@ -246,7 +247,10 @@ export interface StrategyPreview {
   }>
 }
 
+export type TakeProfit = { events: Array<{ event_id: number; ts_code: string; security_name?: string; signal_session: string; signal_gain: number; status: string; execution_session?: string; execution_price?: number; quantity?: number; cost_cny?: number; attempts: Array<{ session: string; quantity: number; filled: boolean }> }>; pending_at_end: string[] }
+
 export interface StrategyResult {
+  take_profit?: TakeProfit | null
   run_id: string
   created_at: string
   summary: {

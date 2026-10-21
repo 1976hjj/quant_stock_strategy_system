@@ -2,7 +2,82 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import React, { act } from 'react'
 import renderer from 'react-test-renderer'
-import QualityStrategies, { CalculationStatus, Curve } from '../.quality-test-build/QualityStrategies.js'
+import QualityStrategies, { CalculationStatus, Curve, TakeProfitResults } from '../.quality-test-build/QualityStrategies.js'
+
+test('50% exit is a fourth independent comparison with its own curve, records and rebuild target', async () => {
+  const originalWindow=globalThis.window
+  globalThis.window={...originalWindow,localStorage:{getItem:()=>null,setItem:()=>{}}}
+  const base={...items[2],strategy_id:'factor-sharpe-quarter-missing10',name:'两项合用',evidence_version:'MISSING_INPUT_DIAGNOSTIC'}
+  const exit={...base,strategy_id:'factor-sharpe-quarter-missing-tp50-10',name:'两项合用＋50%止盈',evidence_version:'TAKE_PROFIT_DIAGNOSTIC',summary:{...metrics,annualized_return:.1744658718}}
+  const variants=[base,exit]
+  const calls=[]
+  globalThis.fetch=async (url,options)=>{
+    const path=String(url).split('/api/v1/')[1];calls.push({path,options})
+    if(path==='quality-strategies')return {ok:true,json:async()=>({categories:[{id:'FACTOR_WEIGHTED',name:'因子加权'}],items:variants})}
+    if(path.endsWith('/calculate'))return {ok:true,json:async()=>({job_id:'exit50-job',status:'RUNNING'})}
+    const item=path.endsWith(exit.strategy_id)?exit:base
+    return {ok:true,json:async()=>({...detail(item),request:{...detail(item).request,take_profit_policy:item===exit?'GAIN_50_CLEAR':'NONE'},take_profit:item===exit?{events:[{event_id:1,ts_code:'600001.SH',security_name:'历史止盈股',signal_session:'2025-01-02',signal_gain:.51,status:'FILLED',execution_session:'2025-01-03',execution_price:15,quantity:100,cost_cny:5,attempts:[{session:'2025-01-03',filled:true,quantity:100}]}],pending_at_end:[]}:null})}
+  }
+  let tree
+  try{
+    await act(async()=>{tree=renderer.create(React.createElement(QualityStrategies));await Promise.resolve()})
+    assert.equal(tree.root.findByProps({className:'qs-candidates'}).findAllByType('button').length,1)
+    const nav=tree.root.findByProps({'aria-label':'缺失处理方案切换'})
+    await act(async()=>{nav.findAllByType('button')[1].props.onClick();await Promise.resolve()})
+    assert.match(text(tree),/17.45%/)
+    assert.match(text(tree),/50%止盈独立回测/)
+    assert.match(text(tree),/历史止盈股/)
+    await act(async()=>{button(tree.root,'全量重算／更新').props.onClick();await Promise.resolve()})
+    assert.equal(calls.find(c=>c.options?.method==='POST').path,`quality-strategies/${exit.strategy_id}/calculate`)
+  }finally{if(tree)await act(async()=>tree.unmount());globalThis.window=originalWindow}
+})
+
+test('exit results distinguish pending and blocked signals from actual sales', async()=>{
+  let tree
+  try{
+    const result={events:[{event_id:1,ts_code:'603096.SH',security_name:'待卖出',signal_session:'2026-10-19',signal_gain:.51,status:'PENDING',attempts:[{session:'2026-10-20',filled:false,quantity:100}]}],pending_at_end:['603096.SH']}
+    await act(async()=>{tree=renderer.create(React.createElement(TakeProfitResults,{result}))})
+    assert.match(text(tree),/已成交 .*0.* 次/)
+    assert.match(text(tree),/尚未成交/)
+    assert.match(text(tree),/待执行/)
+    assert.doesNotMatch(text(tree),/21.85/)
+  }finally{if(tree)await act(async()=>tree.unmount())}
+})
+
+test('missing-input comparisons share one entry but keep three independent replay and calculation targets', async () => {
+  const originalWindow = globalThis.window
+  globalThis.window = { ...originalWindow, localStorage: { getItem: () => null, setItem: () => {} } }
+  const ids = ['factor-sharpe-quarter-divmissing10', 'factor-sharpe-quarter-haltrisk10', 'factor-sharpe-quarter-missing10']
+  const labels = ['股息未知最低分', '停牌风险重算', '两项合用']
+  const variants = ids.map((strategy_id, i) => ({ ...items[2], strategy_id,
+    name: `${labels[i]} · 10股`, target_count: 10, schedule: 'QUARTER',
+    evidence_version: 'MISSING_INPUT_DIAGNOSTIC', summary: { ...metrics, total_return: (i + 1) / 10 } }))
+  const calls = []
+  globalThis.fetch = async (url, options) => {
+    const path = String(url).split('/api/v1/')[1]
+    calls.push({ path, options })
+    if (path === 'quality-strategies') return { ok: true, json: async () => ({ categories: [{ id: 'FACTOR_WEIGHTED', name: '因子加权' }], items: variants }) }
+    if (path.endsWith('/calculate')) return { ok: true, json: async () => ({ job_id: 'missing-test', status: 'RUNNING' }) }
+    const item = variants.find(v => path.endsWith(v.strategy_id))
+    return { ok: true, json: async () => detail(item) }
+  }
+  let tree
+  try {
+    await act(async () => { tree = renderer.create(React.createElement(QualityStrategies)); await Promise.resolve() })
+    assert.equal(tree.root.findByProps({ className: 'qs-candidates' }).findAllByType('button').length, 1)
+    const nav = () => tree.root.findByProps({ 'aria-label': '缺失处理方案切换' })
+    assert.deepEqual(nav().findAllByType('button').map(b => b.children.join('')), labels)
+    for (let i = 0; i < variants.length; i++) {
+      await act(async () => { nav().findAllByType('button')[i].props.onClick(); await Promise.resolve() })
+      const replay = tree.root.findByProps({ 'aria-label': '缺失处理独立回测' })
+      assert.equal(replay.findByProps({ className: 'qs-metrics' }).findAllByType('b')[0].children.join(''), `${(i + 1) * 10}.00%`)
+      assert.equal(nav().findAllByType('button')[i].props['aria-pressed'], true)
+      assert.equal(tree.root.findAllByType('h2')[0].children.join(''), variants[i].name)
+    }
+    await act(async () => { button(tree.root, '全量重算／更新').props.onClick(); await Promise.resolve() })
+    assert.equal(calls.find(c => c.options?.method === 'POST').path, `quality-strategies/${ids[2]}/calculate`)
+  } finally { if (tree) await act(async () => tree.unmount()); globalThis.window = originalWindow }
+})
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 globalThis.window = { setInterval, clearInterval }
@@ -21,6 +96,43 @@ const detail = item => ({ ...item, annual: [{ year: 2025, return: .2 }],
 })
 const button = (root, label) => root.findAllByType('button').find(b => b.children.some(c => typeof c === 'string' && c.includes(label)))
 const text = tree => JSON.stringify(tree.toJSON())
+const nodeText = node => typeof node === 'string' || typeof node === 'number' ? String(node) : (node?.children || []).map(nodeText).join('')
+
+test('refit full history switches its own account, labels training years and keeps zero-weight eligibility visible', async () => {
+  const originalWindow=globalThis.window
+  let saved=JSON.stringify({category:'FACTOR_WEIGHTED',strategy_id:'factor-sharpe-quarter-refit2020-2025-tp50-10'})
+  globalThis.window={...originalWindow,localStorage:{getItem:()=>saved,setItem:(_,v)=>{saved=v}}}
+  const base={...items[2],strategy_id:'factor-sharpe-quarter-missing-tp50-10',name:'旧权重50%止盈',evidence_version:'TAKE_PROFIT_DIAGNOSTIC'}
+  const refit={...base,strategy_id:'factor-sharpe-quarter-refit2020-2025-tp50-10',name:'新权重50%止盈',evidence_version:'WEIGHT_REFIT_DIAGNOSTIC',calculation_policy:'HISTORICAL_DIAGNOSTIC_ONLY',calculation_state:'HISTORICAL_DIAGNOSTIC',weight_training:{start:'2020-01-01',end:'2025-12-31'},summary:{...metrics,total_return:5.2916,annualized_return:.193675,maximum_drawdown:-.270808},display_score_rules:[{factor_id:'jqdata-gross-margin-ttm',direction:'HIGH',weight:1},{factor_id:'jqdata-book-to-price-ratio',direction:'HIGH',weight:0,missing_policy:'EXCLUDE'}]}
+  const calls=[]
+  globalThis.fetch=async(url,options)=>{
+    const path=String(url).split('/api/v1/')[1];calls.push({path,options})
+    if(path==='quality-strategies')return {ok:true,json:async()=>({categories:[{id:'FACTOR_WEIGHTED',name:'因子加权'}],items:[base,refit]})}
+    const item=path.endsWith(refit.strategy_id)?refit:base
+    return {ok:true,json:async()=>({...detail(item),start:'2016-01-01',end:'2026-10-19',initial_cash_cny:100,annual:[{year:2016,return:item===refit?.3:.1},{year:2026,return:item===refit?.14:.08}],daily:[{session:'2016-01-04',nav:100,cash:100,holdings:[]},{session:'2026-10-19',nav:item===refit?629.16:120,cash:100,holdings:[{ts_code:'A',security_name:item===refit?'新权重持仓':'旧权重持仓',quantity:100,market_value_cny:item===refit?529.16:20,industry_name:'测试行业'}]}]})}
+  }
+  let tree
+  try{
+    await act(async()=>{tree=renderer.create(React.createElement(QualityStrategies));await Promise.resolve()})
+    assert.equal(tree.root.findByProps({className:'qs-candidates'}).findAllByType('button').length,1)
+    const nav=()=>tree.root.findByProps({'aria-label':'缺失处理方案切换'})
+    assert.deepEqual(nav().findAllByType('button').map(nodeText),['2016—2019权重＋50%止盈','2020—2025权重＋50%止盈'])
+    assert.match(text(tree),/19.37%/);assert.match(text(tree),/-27.08%/)
+    assert.match(text(tree),/全程固定使用2020—2025年训练权重/)
+    assert.match(text(tree),/2016—2019年使用后来训练的权重/)
+    assert.match(nodeText(tree.root.findByProps({'aria-label':'最新明细'})),/新权重持仓/)
+    assert.match(text(tree),/B\/P（净资产\/市值）/);assert.match(text(tree),/0.00%/)
+    assert.match(text(tree),/不计分；仍保留缺失剔除要求/)
+    assert.equal(tree.root.findAllByType('input').filter(n=>n.props.type==='number').length,0)
+    assert.equal(button(tree.root,'全量重算／更新'),undefined)
+    await act(async()=>{nav().findAllByType('button')[0].props.onClick();await Promise.resolve()})
+    assert.match(nodeText(tree.root.findByProps({'aria-label':'最新明细'})),/旧权重持仓/)
+    assert.ok(button(tree.root,'全量重算／更新'))
+    await act(async()=>{nav().findAllByType('button')[1].props.onClick();await Promise.resolve()})
+    assert.equal(JSON.parse(saved).strategy_id,refit.strategy_id)
+    assert.equal(calls.filter(c=>c.options?.method==='POST').length,0)
+  }finally{if(tree)await act(async()=>tree.unmount());globalThis.window=originalWindow}
+})
 
 test('running calculation panel shows reported progress, session and old-result provenance', async () => {
   let tree
@@ -54,7 +166,7 @@ test('chart hover uses the exact historical account and initial capital, includi
   let tree
   await act(async () => { tree = renderer.create(React.createElement(Curve, { daily, initialCash: 1000000 })) })
   assert.equal(tree.root.findAllByProps({ role: 'tooltip' }).length, 0)
-  const svg = tree.root.findByType('svg')
+  const svg = tree.root.findByProps({className:'qs-curve'})
   await act(async () => svg.props.onPointerMove({ clientX: 48, currentTarget: { getBoundingClientRect: () => ({ left: 0, width: 980, height: 400 }) } }))
   let tooltip = tree.root.findByProps({ role: 'tooltip' })
   const pairs = () => Object.fromEntries(tooltip.findAllByType('dt').map((dt, i) => [dt.children.join(''), tooltip.findAllByType('dd')[i].children.join('')]))
@@ -80,7 +192,7 @@ test('chart hover uses the exact historical account and initial capital, includi
 test('chart never invents missing historical cash or holdings', async () => {
   let tree
   await act(async () => { tree = renderer.create(React.createElement(Curve, { daily: [{ session: '2020-01-02', nav: 100 }] })) })
-  await act(async () => tree.root.findByType('svg').props.onFocus())
+  await act(async () => tree.root.findByProps({className:'qs-curve'}).props.onFocus())
   assert.match(text(tree), /未记录/)
   assert.match(text(tree), /未保存逐日持仓明细/)
   assert.equal(tree.root.findAllByProps({ className: 'qs-tooltip-holdings' }).length, 0)
@@ -89,6 +201,44 @@ test('chart never invents missing historical cash or holdings', async () => {
   assert.equal(values['累计收益'], '—')
   assert.equal(values['实际股票仓位'], '—')
   await act(async () => tree.unmount())
+})
+
+test('fixed latest details equal the final crosshair snapshot and stay fixed when the cursor moves', async () => {
+  const daily=[
+    {session:'2026-10-16',nav:1000,cash:400,positions:1,daily_return:0,holdings:[{ts_code:'A',security_name:'较早持仓',quantity:100,market_value_cny:600}]},
+    {session:'2026-10-19',nav:1100,cash:400,positions:1,daily_return:.1,holdings:[{ts_code:'B',security_name:'最后日持仓',quantity:100,market_value_cny:700,industry_name:'传媒 / 出版',holding_since_session:'2026-10-19',last_rebalance_session:'2026-10-19',average_cost_price:6,unrealized_pnl_cny:100,unrealized_pnl_pct:1/6,daily_price_change_pct:.05,daily_price_change_cny:30}]},
+  ]
+  let tree
+  try{
+    await act(async()=>{tree=renderer.create(React.createElement(Curve,{daily,initialCash:1000,showLatestDetails:true}))})
+    const latest=()=>tree.root.findByProps({'aria-label':'最新明细'})
+    const pairs=root=>Object.fromEntries(root.findAllByType('dt').map((dt,i)=>[dt.children.join(''),root.findAllByType('dd')[i].children.join('')]))
+    assert.equal(tree.root.findAllByProps({role:'tooltip'}).length,0)
+    assert.equal(pairs(latest())['账户权益'],'1,100 元')
+    assert.equal(pairs(latest())['累计收益'],'10.00%')
+    assert.match(nodeText(latest()),/最后日持仓/)
+    await act(async()=>tree.root.findByProps({className:'qs-curve'}).props.onFocus())
+    const tooltip=tree.root.findByProps({role:'tooltip'})
+    assert.deepEqual(pairs(latest()),pairs(tooltip))
+    assert.deepEqual(latest().findAllByType('tbody').map(t=>t.findAllByType('td').map(td=>nodeText(td))),tooltip.findAllByType('tbody').map(t=>t.findAllByType('td').map(td=>nodeText(td))))
+    await act(async()=>tree.root.findByProps({className:'qs-curve'}).props.onKeyDown({key:'Home',preventDefault(){}}))
+    assert.equal(tree.root.findByProps({role:'tooltip'}).findByType('header').findByType('b').children[0],'2026-10-16')
+    assert.equal(pairs(latest())['账户权益'],'1,100 元')
+    assert.match(nodeText(latest()),/最后日持仓/)
+  }finally{if(tree)await act(async()=>tree.unmount())}
+})
+
+test('latest details show final-day cash or missing holdings without falling back to an earlier stock list', async()=>{
+  for(const holdings of [[],undefined]){
+    let tree
+    try{
+      await act(async()=>{tree=renderer.create(React.createElement(Curve,{showLatestDetails:true,daily:[{session:'2026-10-16',nav:100,holdings:[{ts_code:'A',security_name:'已经清仓'}]},{session:'2026-10-19',nav:100,cash:100,positions:0,holdings}]}))})
+      const latest=tree.root.findByProps({'aria-label':'最新明细'})
+      assert.equal(latest.findAllByType('table').length,0)
+      assert.doesNotMatch(nodeText(latest),/已经清仓/)
+      assert.match(text(tree),holdings?/空仓/:/未保存逐日持仓明细/)
+    }finally{if(tree)await act(async()=>tree.unmount())}
+  }
 })
 
 test('crosshair shows all ten holdings and their own date-specific floating P/L', async () => {
@@ -103,7 +253,7 @@ test('crosshair shows all ten holdings and their own date-specific floating P/L'
       { session: '2026-08-19', nav: 100000, holdings, positions: 10 },
       { session: '2026-08-20', nav: 100001, holdings: [], positions: 0 },
     ] })) })
-    const svg = tree.root.findByType('svg')
+    const svg = tree.root.findByProps({className:'qs-curve'})
     await act(async () => svg.props.onKeyDown({ key: 'Home', preventDefault() {} }))
     let table = tree.root.findByProps({ 'aria-label': '2026-08-19全部持仓与浮盈亏' })
     assert.equal(table.findByType('tbody').findAllByType('tr').length, 10)
@@ -118,6 +268,37 @@ test('crosshair shows all ten holdings and their own date-specific floating P/L'
     assert.match(text(tree), /空仓/)
     assert.equal(tree.root.findAllByType('tbody').length, 0)
     assert.doesNotMatch(text(tree), /-1,234.56/)
+  } finally { if (tree) await act(async () => tree.unmount()) }
+})
+
+test('holdings display daily price percentage and share-scaled amount independently of floating P/L', async () => {
+  let tree
+  try {
+    await act(async () => { tree = renderer.create(React.createElement(Curve, { daily: [
+      { session: '2026-10-19', nav: 10000, holdings: [
+        { ts_code: 'A', daily_price_change_pct: .025, daily_price_change_cny: 125, unrealized_pnl_cny: -500 },
+        { ts_code: 'B', daily_price_change_pct: -.01, daily_price_change_cny: -60 },
+        { ts_code: 'C', daily_price_change_pct: 0, daily_price_change_cny: 0 },
+        { ts_code: 'D', daily_price_change_status: 'MISSING_PREVIOUS_CLOSE' },
+        { ts_code: 'E', daily_price_change_status: 'SHARE_ADJUSTMENT' },
+        { ts_code: 'F', daily_price_change_status: 'MISSING_MARK' },
+      ] },
+    ] })) })
+    await act(async () => tree.root.findByProps({className:'qs-curve'}).props.onFocus())
+    assert.match(text(tree), /较上个交易日涨跌幅 \/ 金额/)
+    const cells = tree.root.findByType('tbody').findAllByType('tr').map(row => row.findAllByType('td')[5])
+    assert.equal(cells[0].children[0], '+2.50%')
+    assert.equal(cells[0].findByType('small').children.join(''), '+125 元')
+    assert.equal(cells[0].props.className, 'qs-holding-profit')
+    assert.equal(cells[1].children[0], '-1.00%')
+    assert.equal(cells[1].findByType('small').children.join(''), '-60 元')
+    assert.equal(cells[1].props.className, 'qs-holding-loss')
+    assert.equal(cells[2].children[0], '0.00%')
+    assert.equal(cells[2].props.className, '')
+    assert.equal(cells[3].findByType('small').children.join(''), '未记录')
+    assert.equal(cells[4].findByType('small').children.join(''), '送转待核对')
+    assert.equal(cells[5].findByType('small').children.join(''), '估值沿用')
+    assert.match(text(tree), /-500/)
   } finally { if (tree) await act(async () => tree.unmount()) }
 })
 
@@ -138,7 +319,7 @@ test('crosshair preserves continuing holding slots across prices, substitutions 
   let tree
   try {
     await act(async () => { tree = renderer.create(React.createElement(Curve, { daily })) })
-    const svg = tree.root.findByType('svg')
+    const svg = tree.root.findByProps({className:'qs-curve'})
     const key = async key => act(async () => svg.props.onKeyDown({ key, preventDefault() {} }))
     const order = () => tree.root.findByType('tbody').findAllByType('tr').map(row => row.findAllByType('b')[0]?.children[0] ?? null)
     await key('Home')
@@ -173,7 +354,7 @@ test('crosshair keeps moving left, while deliberate pinning holds the date until
       { session: '2026-01-05', nav: 101, holdings: [] },
       { session: '2026-01-06', nav: 102, holdings: [] },
     ] })) })
-    const svg = tree.root.findByType('svg')
+    const svg = tree.root.findByProps({className:'qs-curve'})
     const date = () => tree.root.findByProps({ role: 'tooltip' }).findByType('header').findByType('b').children[0]
     await act(async () => svg.props.onPointerMove(pointer(932)))
     assert.equal(date(), '2026-01-06')
@@ -215,12 +396,12 @@ test('real component switches categories, displays evidence, submits holdings an
   let tree
   await act(async () => { tree = renderer.create(React.createElement(QualityStrategies)); await Promise.resolve() })
   assert.match(text(tree), /小市值质量＋影子/)
-  assert.equal(tree.root.findAllByType('svg').length, 1)
-  assert.match(text(tree), /-15.00%/)
+  assert.equal(tree.root.findAllByType('svg').length, 0)
+  assert.doesNotMatch(text(tree), /-15.00%/)
   const requestsBeforeSameCard = calls.length
   await act(async () => tree.root.findByProps({ className: 'qs-candidate selected' }).props.onClick())
   assert.equal(calls.length, requestsBeforeSameCard)
-  assert.equal(tree.root.findAllByType('svg').length, 1)
+  assert.equal(tree.root.findAllByType('svg').length, 0)
   await act(async () => { button(tree.root, '银行').props.onClick(); await Promise.resolve() })
   assert.match(text(tree), /银行质量股息/)
   assert.doesNotMatch(text(tree), /模型参考持仓|最近信号的目标组合／数量差额|招商银行/)
@@ -234,7 +415,7 @@ test('real component switches categories, displays evidence, submits holdings an
   assert.equal(calls.some(c => c.path.endsWith('/calculate')), false)
   await act(async () => {
     tree.root.findAllByType('input').find(n => n.props.type === 'number').props.onChange({ target: { value: '2000000' } })
-    tree.root.findAllByType('input').find(n => n.props.type === 'date').props.onChange({ target: { value: '2026-10-12' } })
+    tree.root.findAllByType('input').find(n => n.props.type === 'date' && !n.props['aria-label']).props.onChange({ target: { value: '2026-10-12' } })
     tree.root.findByType('textarea').props.onChange({ target: { value: '600036.SH 100' } })
   })
   await act(async () => { button(tree.root, '全量重算／更新').props.onClick(); await Promise.resolve() })
@@ -248,6 +429,38 @@ test('real component switches categories, displays evidence, submits holdings an
   await act(async () => tree.unmount())
 })
 
+test('every quality category displays industry in the shared holding identity, with an explicit missing label', async () => {
+  const originalWindow = globalThis.window
+  globalThis.window = { ...originalWindow, localStorage: { getItem: () => null, setItem() {} } }
+  const categories = [{ id: 'SMALL_CAP', name: '小市值' }, { id: 'BANK', name: '银行' }, { id: 'FACTOR_WEIGHTED', name: '因子加权' }]
+  const industries = ['纺织服饰 / 服装家纺', '银行 / 股份制银行', '传媒 / 出版']
+  globalThis.fetch = async url => {
+    const path = String(url).split('/api/v1/')[1]
+    const index = items.findIndex(item => path.endsWith(item.strategy_id))
+    if (path === 'quality-strategies') return { ok: true, json: async () => ({ categories, items }) }
+    const daily = [{ session: '2026-10-19', nav: 1000, holdings: [
+        { ts_code: 'A', security_name: '已知板块股票', industry_name: industries[index], industry_l3_name: '三级行业', industry_in_date: '2020-01-01' },
+        { ts_code: 'B', security_name: '未知板块股票' },
+      ] }]
+    return { ok: true, json: async () => ({ ...detail(items[index]), signal: {
+      calculation_mode: 'FULL_LOCAL_REBUILD_V3', as_of: '2026-10-19', model_positions: [], targets: [], orders: [], warnings: [], input_bindings: [], execution_note: '参考持仓',
+      historical_replay: { summary: metrics, daily, annual: [] },
+    } }) }
+  }
+  let tree
+  try {
+    await act(async () => { tree = renderer.create(React.createElement(QualityStrategies)); await Promise.resolve() })
+    for (let index = 0; index < categories.length; index++) {
+      if (index) await act(async () => { button(tree.root, categories[index].name).props.onClick(); await Promise.resolve() })
+      const latest = tree.root.findByProps({ 'aria-label': '最新明细' })
+      const labels = latest.findAllByProps({ className: 'qs-holding-industry' })
+      assert.equal(labels[0].children.join(''), industries[index])
+      assert.match(labels[0].props.title, /申万行业.*三级行业.*2020-01-01/)
+      assert.equal(labels[1].children.join(''), '板块未记录')
+    }
+  } finally { if (tree) await act(async () => tree.unmount()); globalThis.window = originalWindow }
+})
+
 test('component exposes a server error instead of displaying a successful signal', async () => {
   globalThis.fetch = async () => ({ ok: false, json: async () => ({ detail: '证据哈希不一致' }) })
   let tree
@@ -257,7 +470,7 @@ test('component exposes a server error instead of displaying a successful signal
   await act(async () => tree.unmount())
 })
 
-test('legacy replay is kept in collapsed history and never shown as a current signal', async () => {
+test('archive block is removed and legacy accounts never become latest details', async () => {
   const calls = []
   globalThis.fetch = async url => {
     calls.push(String(url))
@@ -273,8 +486,9 @@ test('legacy replay is kept in collapsed history and never shown as a current si
   await act(async () => { tree = renderer.create(React.createElement(QualityStrategies)); await Promise.resolve() })
   assert.match(text(tree), /待全量重算/)
   assert.doesNotMatch(text(tree), /过期持仓/)
-  const history = tree.root.findByProps({ className: 'qs-history-evidence' })
-  assert.equal(history.props.open, undefined)
+  assert.equal(tree.root.findAllByProps({ className: 'qs-history-evidence' }).length, 0)
+  assert.equal(tree.root.findAllByProps({ 'aria-label': '最新明细' }).length, 0)
+  assert.doesNotMatch(text(tree), /历史归档与对照/)
   assert.equal(calls.some(path => path.endsWith('/calculate')), false)
   assert.equal(button(tree.root, '本次同规则复算'), undefined)
   await act(async () => tree.unmount())
@@ -350,7 +564,7 @@ test('switching keeps the panel mounted and stale same-strategy responses cannot
   await act(async () => button(tree.root, '银行').props.onClick())
   assert.equal(tree.root.findByProps({ className: 'qs-detail-content' }), panel)
   assert.equal(panel.props.inert, true)
-  assert.equal(tree.root.findAllByType('svg').length, 1)
+  assert.equal(tree.root.findAllByType('svg').length, 0)
   await act(async () => button(tree.root, '因子加权').props.onClick())
   await act(async () => button(tree.root, '银行').props.onClick())
   await act(async () => pending[2].resolve({ ok: true, json: async () => ({ ...detail(items[1]), notes: '当前正确结果' }) }))
@@ -452,7 +666,7 @@ test('five and ten stock variants switch independent results and restore the sel
     assert.equal(requests.length, beforeReselect)
     assert.match(text(tree), /25.00%/)
     assert.doesNotMatch(text(tree), /50.00%/)
-    assert.equal(tree.root.findAllByType('svg').length, 1)
+    assert.equal(tree.root.findAllByProps({className:'qs-curve'}).length, 1)
     assert.equal(JSON.parse(storage.get('alpha-research.quality-selection')).strategy_id, 'factor-sharpe-quarter5')
     await act(async () => tree.unmount())
     await act(async () => { tree = renderer.create(React.createElement(QualityStrategies)); await Promise.resolve() })
