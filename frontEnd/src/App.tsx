@@ -10,6 +10,7 @@ import StrategyBacktest, { STRATEGY_JOB_EVENT, STRATEGY_JOB_STORAGE_KEY } from '
 import StrategyBacktestHistory from './StrategyBacktestHistory'
 import SingleFactorReports from './SingleFactorReports'
 import QualityStrategies from './QualityStrategies'
+import { preloadQualityStrategies } from './qualityPreload'
 import { strategyApi } from './strategyApi'
 import type { FactorCatalogItem, FactorJobStatus, FactorRelease, JobStatus, M4Options, PreflightResult, RunPayload, UiStageId } from './types'
 
@@ -90,6 +91,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 }
 
 export default function App() {
+  useEffect(() => { void preloadQualityStrategies() }, [])
   const [view, setView] = useState<View>(savedView)
   const [factorStrategyRunning, setFactorStrategyRunning] = useState(false)
   const [rotationRunning, setRotationRunning] = useState(false)
@@ -457,7 +459,7 @@ export default function App() {
     <main>
       <header className="topbar">
         <div className="brand"><span className="brand-mark">M4</span><div><b>因子研究台</b><small>FACTOR EVIDENCE WORKBENCH</small></div></div>
-        <nav className="main-nav"><button className={view === 'DATA' ? 'active' : ''} onClick={() => setView('DATA')}>数据管理</button><button className={view === 'CALCULATE' ? 'active' : ''} onClick={() => setView('CALCULATE')}>因子计算{factorCalculationRunning && <i className="nav-running-dot" />}</button><button className={view === 'ASSETS' ? 'active' : ''} onClick={() => setView('ASSETS')}>因子资产库</button><button className={view === 'STRATEGY' ? 'active' : ''} onClick={() => setView('STRATEGY')}>因子策略{factorStrategyRunning && <i className="nav-running-dot" />}</button>{SHOW_ROTATION_MENU && <button className={view === 'ROTATION' ? 'active' : ''} onClick={() => setView('ROTATION')}>轮动回测{rotationRunning && <i className="nav-running-dot" />}</button>}<button className={view === 'SINGLE_FACTOR_REPORTS' ? 'active' : ''} onClick={() => setView('SINGLE_FACTOR_REPORTS')}>单因子报告</button><button className={view === 'STRATEGY_HISTORY' ? 'active' : ''} onClick={() => setView('STRATEGY_HISTORY')}>历史回测结果</button><button className={view === 'QUALITY' ? 'active' : ''} onClick={() => setView('QUALITY')}>优质策略</button></nav>
+        <nav className="main-nav"><button className={view === 'DATA' ? 'active' : ''} onClick={() => setView('DATA')}>数据管理</button><button className={view === 'CALCULATE' ? 'active' : ''} onClick={() => setView('CALCULATE')}>因子计算{factorCalculationRunning && <i className="nav-running-dot" />}</button><button className={view === 'ASSETS' ? 'active' : ''} onClick={() => setView('ASSETS')}>因子资产库</button><button className={view === 'STRATEGY' ? 'active' : ''} onClick={() => setView('STRATEGY')}>因子策略{factorStrategyRunning && <i className="nav-running-dot" />}</button>{SHOW_ROTATION_MENU && <button className={view === 'ROTATION' ? 'active' : ''} onClick={() => setView('ROTATION')}>轮动回测{rotationRunning && <i className="nav-running-dot" />}</button>}<button className={view === 'SINGLE_FACTOR_REPORTS' ? 'active' : ''} onClick={() => setView('SINGLE_FACTOR_REPORTS')}>单因子报告</button><button className={view === 'STRATEGY_HISTORY' ? 'active' : ''} onClick={() => setView('STRATEGY_HISTORY')}>历史回测结果</button><button className={view === 'QUALITY' ? 'active' : ''} onMouseEnter={() => void preloadQualityStrategies()} onFocus={() => void preloadQualityStrategies()} onClick={() => setView('QUALITY')}>优质策略</button></nav>
         <div className={`api-state ${apiOnline ? 'online' : ''}`}><i />{apiOnline ? '计算后端已连接' : '计算后端未连接'}</div>
       </header>
 
