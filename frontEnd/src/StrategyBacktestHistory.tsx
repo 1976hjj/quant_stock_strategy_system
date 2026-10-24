@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { strategyApi } from './strategyApi'
 import ShadowTimeline from './ShadowTimeline'
 import { EquityChart } from './StrategyBacktest'
 import ChartTimeRange, { useChartTimeRange } from './ChartTimeRange'
-import { TakeProfitResults } from './QualityStrategies'
+import { Curve, TakeProfitResults } from './QualityStrategies'
 import type { StrategyJob, StrategyJobHistory, StrategyTrade, UniverseSegment } from './strategyApi'
 
 function percent(value: number | null | undefined) {
@@ -72,10 +72,10 @@ function displayedCostPrice(trade: StrategyTrade) {
 }
 
 const STATUS_LABEL: Record<StrategyJobHistory['status'], string> = {
-  QUEUED: '等待队列中', RUNNING: '回测中', PASS: '已完成', FAIL: '失败', STOPPED: '已停止',
+  QUEUED: '等待队列中', RUNNING: '回测中', STOPPING: '正在停止并清理', PASS: '已完成', FAIL: '失败', STOPPED: '已停止',
 }
 
-function YearlyTransactions({ jobId, annual, available }: { jobId: string; annual: Array<{ year: number; return: number }>; available: boolean }) {
+function YearlyTransactions({ jobId, annual, available, source }: { jobId: string; annual: Array<{ year: number; return: number }>; available: boolean; source?: string }) {
   const [selectedYear, setSelectedYear] = useState<number | null>(null)
   const [details, setDetails] = useState<Record<number, Awaited<ReturnType<typeof strategyApi.trades>>>>({})
   const [loading, setLoading] = useState<number | null>(null)
@@ -85,7 +85,7 @@ function YearlyTransactions({ jobId, annual, available }: { jobId: string; annua
     setLoading(year)
     setError('')
     try {
-      const loaded = await strategyApi.trades(jobId, year, offset)
+      const loaded = await strategyApi.historyTrades(jobId, year, offset, source)
       setDetails((current) => ({
         ...current,
         [year]: loaded,
@@ -209,15 +209,17 @@ export function StrategyHistoryDetail({ job }: { job: StrategyJob }) {
   const rotationRequest = request && 'candidates' in request ? request : null
   const factorRequest = request && 'score_rules' in request ? request : null
   const result = job.result
+  const quality = job.quality_strategy
   return <div className="history-detail">
     {job.status === 'PASS' && !job.execution_model_valid && <div className="history-invalid-result"><b>旧成交模型结果已失效</b><span>该结果未按整数股、最低佣金和历史税费规则计算，仅保留用于审计对照，请重新运行。</span></div>}
     <section><h3>策略配置</h3><dl>
       <div><dt>任务编号</dt><dd><code>{job.job_id}</code></dd></div>
       <div><dt>回测区间</dt><dd>{request?.start} → {request?.end}</dd></div>
-      <div><dt>策略类型</dt><dd>{rotationRequest ? '多组合轮动' : '因子选股'}</dd></div>
+      <div><dt>策略类型</dt><dd>{quality ? '优质策略' : rotationRequest ? '多组合轮动' : '因子选股'}</dd></div>
+      {quality && <><div><dt>保存的策略版本</dt><dd>{quality.version ?? '未记录'}</dd></div><div><dt>入选评分</dt><dd>{factorRequest?.minimum_entry_score == null ? '不设门槛' : `≥${factorRequest.minimum_entry_score}分`}</dd></div><div><dt>权重训练期</dt><dd>{quality.weight_training ? `${quality.weight_training.start} → ${quality.weight_training.end}` : '未记录'}</dd></div><div><dt>配权方式</dt><dd>{quality.allocation === 'INVERSE_RESVOL' ? '风险倒数配权' : '等权'}</dd></div><div><dt>留仓调权</dt><dd>{quality.retained_rebalance_policy === 'BAND25' ? '偏离25%才调权' : '原规则'}</dd></div></>}
       <div className="history-universe"><dt>股票池范围</dt><dd title={universeScope(request)}>{universeScope(request)}</dd></div>
       {factorRequest && <div><dt>持股 / 保留排名</dt><dd>{factorRequest.target_count} / {factorRequest.retention_rank}</dd></div>}
-      {factorRequest && <div><dt>调仓间隔</dt><dd>{factorRequest.rebalance_sessions} 个交易日</dd></div>}
+      {factorRequest && <div><dt>调仓间隔</dt><dd>{quality?.schedule === 'QUARTER' ? '自然季度末' : quality?.schedule === 'HALF_YEAR' ? '自然半年末' : `${factorRequest.rebalance_sessions} 个交易日`}</dd></div>}
       {factorRequest && <div><dt>个股止盈</dt><dd>{factorRequest.take_profit_policy === 'GAIN_50_CLEAR' ? '盈利50%清仓' : '不加止盈'}</dd></div>}
       {factorRequest && <div><dt>最低上市天数</dt><dd>{factorRequest.minimum_listed_sessions} 个交易日</dd></div>}
       {factorRequest && <div><dt>排除 ST</dt><dd>{factorRequest.exclude_st ? '开启' : '关闭'}</dd></div>}
@@ -229,8 +231,8 @@ export function StrategyHistoryDetail({ job }: { job: StrategyJob }) {
       <div><dt>初始资金</dt><dd>¥{number(request?.initial_cash_cny, 0)}</dd></div>
       <div><dt>现金保留</dt><dd>{percent(rotationRequest?.allocation.minimum_cash_fraction ?? factorRequest?.minimum_cash_fraction)}</dd></div>
     </dl></section>
-    {factorRequest && <section><h3>评分因子</h3><div className="detail-rules">{factorRequest.score_rules.map((rule) => <div key={rule.factor_id}><b>{rule.factor_id}</b><span>{rule.direction === 'HIGH' ? '高值优先' : '低值优先'} · 权重 {number(rule.weight)}% · {rule.transform}</span><code title={rule.release_id}>{rule.release_id}</code></div>)}</div></section>}
-    {factorRequest && <section><h3>过滤规则</h3><div className="detail-rules">{factorRequest.filter_rules.length ? factorRequest.filter_rules.map((rule) => <div key={rule.factor_id}><b>{rule.factor_id}</b><span>{rule.mode === 'EXCLUDE_HIGH' ? '排除最高' : '排除最低'} {percent(rule.fraction)} · {rule.missing_policy === 'EXCLUDE' ? '缺失排除' : '缺失保留'}</span><code title={rule.release_id}>{rule.release_id}</code></div>) : <span className="detail-none">无过滤规则</span>}</div></section>}
+    {factorRequest && <section><h3>评分因子</h3><div className="detail-rules">{factorRequest.score_rules.map((rule) => <div key={rule.factor_id}><b>{rule.factor_id}</b><span>{rule.direction === 'HIGH' ? '高值优先' : '低值优先'} · 权重 {quality ? percent(rule.weight / factorRequest.score_rules.reduce((sum, r) => sum + r.weight, 0)) : `${number(rule.weight)}%`} · {rule.transform}</span><code title={rule.release_id}>{rule.release_id}</code></div>)}</div></section>}
+    {factorRequest && <section><h3>过滤规则</h3><div className="detail-rules">{factorRequest.filter_rules?.length ? factorRequest.filter_rules.map((rule) => <div key={rule.factor_id}><b>{rule.factor_id}</b><span>{rule.mode === 'EXCLUDE_HIGH' ? '排除最高' : '排除最低'} {percent(rule.fraction)} · {rule.missing_policy === 'EXCLUDE' ? '缺失排除' : '缺失保留'}</span><code title={rule.release_id}>{rule.release_id}</code></div>) : <span className="detail-none">无过滤规则</span>}</div></section>}
     {factorRequest?.shadow_health?.experiment_variant === 'S4V3' && <section><h3>市场与影子策略环境仓位</h3><dl>
       <div><dt>环境仓位方案</dt><dd>{factorRequest.shadow_health.experiment_variant}</dd></div>
       <div><dt>全A趋势 / 上涨比例回看</dt><dd>MA{factorRequest.shadow_health.external_trend_sessions} / {factorRequest.shadow_health.external_breadth_return_sessions}日</dd></div>
@@ -242,7 +244,9 @@ export function StrategyHistoryDetail({ job }: { job: StrategyJob }) {
       {result?.shadow_health?.source && <><div><dt>影子信号来源</dt><dd>{result.shadow_health.source.experiment_variant}</dd></div><div><dt>来源选股序列指纹</dt><dd title={result.shadow_health.source.selection_fingerprint}><code>{result.shadow_health.source.selection_fingerprint.slice(7, 23)}</code></dd></div></>}
     </dl></section>}
     {result?.shadow_health?.experiment_variant === 'S4V3' && <HistoryShadowTimeline result={result} />}
-    {result && <HistoryEquityChart result={result} />}
+    {job.error_message && <p role="alert" className="history-trade-error">{job.error_message}</p>}
+    {quality && <p className="history-trade-note">以下为本次任务保存的独立账户；日期、评分门槛、曲线、持仓与成交均属于这次回测，不随当前优质策略参数变化。</p>}
+    {result && (quality ? <Curve daily={result.daily} initialCash={result.initial_cash_cny} benchmark={result.comparison_benchmark} showLatestDetails /> : <HistoryEquityChart result={result} />)}
     {result && <TakeProfitResults result={result.take_profit} schedule="下次正常调仓" />}
     {factorRequest?.shadow_health && !['S0', 'S4V3'].includes(factorRequest.shadow_health.experiment_variant) && <section><h3>历史实验配置</h3><p>这是已归档的 {factorRequest.shadow_health.experiment_variant} 回测。完整旧参数保存在下方原始 JSON 报告中。</p></section>}
     {rotationRequest && <section><h3>候选组合与因子</h3><div className="detail-rules">{rotationRequest.candidates.map((candidate) => <div key={candidate.candidate_id}><b>{candidate.name}</b><span>{candidate.score_rules.map((rule) => `${rule.factor_id}（${rule.direction === 'HIGH' ? '高' : '低'}）`).join(' · ')} · 持股 {candidate.target_count}</span></div>)}</div></section>}
@@ -264,43 +268,35 @@ export function StrategyHistoryDetail({ job }: { job: StrategyJob }) {
       <div><dt>年化波动</dt><dd>{percent(result?.summary.annualized_volatility)}</dd></div>
     </dl></section>
     {result?.annual.length ? <section className="history-annual"><h3>逐年收益</h3><div>{result.annual.map((item) => <span key={item.year}><i>{item.year}</i><b>{percent(item.return)}</b></span>)}</div></section> : null}
-    {result?.annual.length ? <YearlyTransactions jobId={job.job_id} annual={result.annual} available={Boolean(job.trade_detail_available)} /> : null}
+    {result?.annual.length ? <YearlyTransactions jobId={job.job_id} source={job.history_source} annual={result.annual} available={Boolean(job.trade_detail_available)} /> : null}
   </div>
 }
 
 export default function StrategyBacktestHistory({ onOpenRunning }: { onOpenRunning: (strategyType?: string) => void }) {
   const [jobs, setJobs] = useState<StrategyJobHistory[]>([])
+  const loadVersion = useRef(0)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [details, setDetails] = useState<Record<string, StrategyJob>>({})
   const [detailLoading, setDetailLoading] = useState('')
   const [deleting, setDeleting] = useState('')
+  const [stopping, setStopping] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [selectedDay, setSelectedDay] = useState(() => runDay(new Date().toISOString()))
+  const [strategyType, setStrategyType] = useState('ALL')
+  const [offset, setOffset] = useState(0)
+  const [total, setTotal] = useState(0)
+  const historyKey = (job: StrategyJobHistory) => `${job.history_source || 'STRATEGY'}:${job.job_id}`
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null)
 
   const load = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true)
+    const version = ++loadVersion.current
     try {
-      const response = await strategyApi.list('history')
-      const selectedJobs = selectedDay
-        ? response.jobs.filter((job) => runDay(job.created_at) === selectedDay)
-        : []
-      const hydrated = await Promise.all(selectedJobs.map(async (job) => {
-        const hasUniverse = job.request && 'universe_segments' in job.request
-        const hasInterval = job.request && (
-          'rebalance_sessions' in job.request || 'candidates' in job.request
-        )
-        if (hasUniverse && hasInterval) return job
-        try {
-          const detail = await strategyApi.status(job.job_id)
-          return { ...job, request: detail.request || job.request }
-        } catch {
-          return job
-        }
-      }))
-      const hydratedById = new Map(hydrated.map((job) => [job.job_id, job]))
-      setJobs(response.jobs.map((job) => hydratedById.get(job.job_id) || job))
+      const response = await strategyApi.history(selectedDay, strategyType, offset)
+      if (version !== loadVersion.current) return
+      setJobs(response.jobs); setTotal(response.total)
+      if (offset > 0 && response.jobs.length === 0 && response.total > 0) setOffset(Math.floor((response.total - 1) / 50) * 50)
       setError('')
       if (showLoading) {
         setRefreshedAt(new Date().toLocaleTimeString('zh-CN', {
@@ -308,20 +304,21 @@ export default function StrategyBacktestHistory({ onOpenRunning }: { onOpenRunni
         }))
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason))
+      if (version === loadVersion.current) setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
-      setLoading(false)
+      if (version === loadVersion.current) setLoading(false)
     }
-  }, [selectedDay])
+  }, [selectedDay, strategyType, offset])
 
-  const toggleDetail = async (jobId: string) => {
-    if (expanded === jobId) { setExpanded(null); return }
-    setExpanded(jobId)
-    if (details[jobId]) return
-    setDetailLoading(jobId)
+  const toggleDetail = async (job: StrategyJobHistory) => {
+    const key = historyKey(job)
+    if (expanded === key) { setExpanded(null); return }
+    setExpanded(key)
+    if (details[key] && !['QUEUED', 'RUNNING', 'STOPPING'].includes(details[key].status)) return
+    setDetailLoading(key)
     try {
-      const detail = await strategyApi.status(jobId)
-      setDetails((current) => ({ ...current, [jobId]: detail }))
+      const detail = await strategyApi.historyStatus(job.job_id, job.history_source)
+      setDetails((current) => ({ ...current, [key]: detail }))
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
@@ -330,15 +327,16 @@ export default function StrategyBacktestHistory({ onOpenRunning }: { onOpenRunni
   }
 
   const deleteJob = async (job: StrategyJobHistory) => {
-    if (['QUEUED', 'RUNNING'].includes(job.status)) return
-    if (!window.confirm(`确定删除“${cleanName(job.name)}”吗？\n\n任务 ${job.job_id} 的配置、日志和结果文件都会被永久删除。`)) return
+    if (['QUEUED', 'RUNNING', 'STOPPING'].includes(job.status)) return
+    const quality = job.history_source === 'QUALITY'
+    if (!window.confirm(quality ? `从历史列表移除“${cleanName(job.name)}”吗？\n\n原账户、因子文件和优质策略页面的结果仍会保留。` : `确定删除“${cleanName(job.name)}”吗？\n\n任务 ${job.job_id} 的配置、日志和结果文件都会被永久删除。`)) return
     setDeleting(job.job_id)
     setError('')
     try {
-      await strategyApi.delete(job.job_id)
-      setJobs((current) => current.filter((item) => item.job_id !== job.job_id))
-      setDetails((current) => { const next = { ...current }; delete next[job.job_id]; return next })
-      if (expanded === job.job_id) setExpanded(null)
+      await strategyApi.historyDelete(job.job_id, job.history_source)
+      setDetails((current) => { const next = { ...current }; delete next[historyKey(job)]; return next })
+      if (expanded === historyKey(job)) setExpanded(null)
+      await load()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
@@ -347,23 +345,26 @@ export default function StrategyBacktestHistory({ onOpenRunning }: { onOpenRunni
   }
 
   const cancelJob = async (job: StrategyJobHistory) => {
+    if (stopping) return
+    setStopping(historyKey(job))
     setError('')
     try {
-      await strategyApi.stop(job.job_id)
+      await strategyApi.historyStop(job.job_id, job.history_source)
+      setDetails(current => { const next = { ...current }; delete next[historyKey(job)]; return next })
       await load()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
-    }
+    } finally { setStopping('') }
   }
 
   useEffect(() => { void load(true) }, [load])
   useEffect(() => {
-    if (!jobs.some((item) => ['QUEUED', 'RUNNING'].includes(item.status))) return
+    if (!jobs.some((item) => ['QUEUED', 'RUNNING', 'STOPPING'].includes(item.status))) return
     const timer = window.setInterval(() => void load(), 1500)
     return () => window.clearInterval(timer)
   }, [jobs, load])
 
-  const visibleJobs = selectedDay ? jobs.filter((job) => runDay(job.created_at) === selectedDay) : jobs
+  const visibleJobs = loading ? [] : jobs
 
   return <div className="strategy-history-page">
     <div className="strategy-history-heading">
@@ -371,32 +372,34 @@ export default function StrategyBacktestHistory({ onOpenRunning }: { onOpenRunni
       <div className="history-refresh"><button onClick={() => void load(true)} disabled={loading}>{loading ? '正在刷新…' : '刷新列表'}</button>{refreshedAt && <small>已刷新：{refreshedAt}</small>}</div>
     </div>
     <div className="history-date-filter">
-      <label>运行日期<input type="date" value={selectedDay} onChange={(event) => setSelectedDay(event.target.value)} /></label>
-      {selectedDay && <><span>显示 {visibleJobs.length} 条</span><button onClick={() => setSelectedDay('')}>查看全部</button></>}
+      <label>运行日期<input type="date" aria-label="历史运行日期" value={selectedDay} onChange={(event) => { setLoading(true); setSelectedDay(event.target.value); setOffset(0); setExpanded(null) }} /></label>
+      <label>策略来源<select aria-label="历史策略来源" value={strategyType} onChange={e => { setLoading(true); setStrategyType(e.target.value); setOffset(0); setExpanded(null) }}><option value="ALL">全部策略</option><option value="QUALITY">优质策略</option><option value="FACTOR">因子策略</option><option value="ROTATION">轮动回测</option></select></label>
+      <span>{loading ? '正在读取…' : `共 ${total} 条`}</span>{selectedDay && <button onClick={() => { setLoading(true); setSelectedDay(''); setOffset(0); setExpanded(null) }}>查看全部日期</button>}
     </div>
     {error && <div className="strategy-error"><b>读取失败</b><span>{error}</span><button onClick={() => setError('')}>×</button></div>}
     {!loading && !error && visibleJobs.length === 0 && <div className="history-empty"><b>{selectedDay ? '该日期没有回测记录' : '还没有回测记录'}</b><span>{selectedDay ? '换一个日期，或查看全部记录。' : '启动回测后，任务会自动出现在这里。'}</span></div>}
     {visibleJobs.length > 0 && <div className="history-table">
       <div className="history-table-head"><span>策略 / 时间</span><span>回测区间</span><span>股票池范围</span><span>调仓间隔</span><span>累计收益</span><span>年化收益</span><span>最大回撤</span><span>夏普</span><span>状态</span><span /></div>
-      {visibleJobs.map((job) => <div className={`history-table-item ${job.status.toLowerCase()}`} key={job.job_id}>
+      {visibleJobs.map((job) => <div className={`history-table-item ${job.status.toLowerCase()}`} key={historyKey(job)}>
         <div className="history-main-row">
-          <span className="history-name"><b>{cleanName(job.name)}</b><small>{job.strategy_type === 'ROTATION' ? '轮动回测 · ' : '因子策略 · '}{dateTime(job.created_at)}</small></span>
+          <span className="history-name"><b>{cleanName(job.name)}</b><small>{job.strategy_type === 'QUALITY' ? '优质策略 · ' : job.strategy_type === 'ROTATION' ? '轮动回测 · ' : '因子策略 · '}{dateTime(job.created_at)}</small>{job.quality_strategy && <small>{job.request && 'target_count' in job.request ? `${job.request.target_count}股 · ` : ''}入选评分 {job.request && 'minimum_entry_score' in job.request && job.request.minimum_entry_score != null ? `≥${job.request.minimum_entry_score}分` : '不设门槛'}</small>}</span>
           <span>{job.request?.start || '—'}<small>至 {job.request?.end || '—'}</small></span>
           <span className="history-universe-summary" title={universeScope(job.request)}>{universeScopeSummary(job.request)}<small>股票池范围</small></span>
-          <span className="history-rebalance-summary">{rebalanceIntervalSummary(job.request)}<small>调仓间隔</small></span>
+          <span className="history-rebalance-summary">{job.quality_strategy?.schedule === 'QUARTER' ? '季度换仓' : job.quality_strategy?.schedule === 'HALF_YEAR' ? '半年换仓' : rebalanceIntervalSummary(job.request)}<small>调仓间隔</small></span>
           <strong>{percent(job.result_summary?.total_return)}</strong>
           <strong>{percent(job.result_summary?.annualized_return)}</strong>
           <strong>{percent(job.result_summary?.maximum_drawdown)}</strong>
           <strong>{job.result_summary?.sharpe?.toFixed(2) ?? '—'}</strong>
           <span className={`history-status ${job.status === 'PASS' && !job.execution_model_valid ? 'invalid' : ''}`}><i />{job.status === 'RUNNING' ? `${job.phase} ${job.progress}%` : job.status === 'QUEUED' ? `等待中 · 第 ${job.queue_position ?? '—'} 位` : job.status === 'PASS' && !job.execution_model_valid ? '旧模型失效' : STATUS_LABEL[job.status]}</span>
-          <span className="history-row-actions"><button className="history-detail-button" onClick={() => void toggleDetail(job.job_id)}>{expanded === job.job_id ? '收起' : '详情'}</button>{job.status === 'QUEUED' ? <button className="history-delete-button" onClick={() => void cancelJob(job)}>取消排队</button> : <button className="history-delete-button" disabled={job.status === 'RUNNING' || deleting === job.job_id} title={job.status === 'RUNNING' ? '运行中的任务不能删除' : '删除这条回测记录'} onClick={() => void deleteJob(job)}>{deleting === job.job_id ? '…' : '删除'}</button>}</span>
+          <span className="history-row-actions"><button className="history-detail-button" onClick={() => void toggleDetail(job)}>{expanded === historyKey(job) ? '收起' : '详情'}</button>{(job.status === 'QUEUED' || (job.history_source === 'QUALITY' && ['RUNNING', 'STOPPING'].includes(job.status))) ? <button className="history-delete-button" disabled={!!stopping} onClick={() => void cancelJob(job)}>{stopping === historyKey(job) ? '正在停止…' : job.status === 'QUEUED' ? '取消排队' : job.status === 'STOPPING' ? '重试停止' : '停止回测'}</button> : <button className="history-delete-button" disabled={job.status === 'RUNNING' || deleting === job.job_id} title={job.status === 'RUNNING' ? '运行中的任务不能删除' : job.history_source === 'QUALITY' ? '从历史列表移除，保留原始证据' : '删除这条回测记录'} onClick={() => void deleteJob(job)}>{deleting === job.job_id ? '…' : job.history_source === 'QUALITY' ? '移除' : '删除'}</button>}</span>
         </div>
         {job.status === 'RUNNING' && <div className="history-inline-progress"><i style={{ width: `${job.progress}%` }} /></div>}
-        {expanded === job.job_id && <div className="history-detail-wrap">
-          {detailLoading === job.job_id ? <div className="history-detail-loading">正在读取详细结果…</div> : details[job.job_id] && <StrategyHistoryDetail job={details[job.job_id]} />}
-          <div className="history-detail-actions">{['QUEUED', 'RUNNING'].includes(job.status) ? <button onClick={() => onOpenRunning(job.strategy_type)}>返回运行控制台 →</button> : job.status === 'PASS' ? <a href={strategyApi.reportUrl(job.job_id)} target="_blank">打开原始 JSON 报告 →</a> : null}</div>
+        {expanded === historyKey(job) && <div className="history-detail-wrap">
+          {detailLoading === historyKey(job) ? <div className="history-detail-loading">正在读取详细结果…</div> : details[historyKey(job)] && <StrategyHistoryDetail job={details[historyKey(job)]} />}
+          <div className="history-detail-actions">{['QUEUED', 'RUNNING', 'STOPPING'].includes(job.status) ? <button onClick={() => onOpenRunning(job.strategy_type)}>返回运行控制台 →</button> : job.status === 'PASS' ? <a href={strategyApi.historyReportUrl(job.job_id, job.history_source)} target="_blank">打开原始 JSON 报告 →</a> : null}</div>
         </div>}
       </div>)}
     </div>}
+    {!loading && total > 50 && <div className="history-trade-pagination" aria-label="历史记录分页"><span>第 {offset + 1}—{Math.min(offset + jobs.length, total)} 条，共 {total} 条</span><button disabled={offset === 0} onClick={() => { setLoading(true); setOffset(Math.max(0, offset - 50)); setExpanded(null) }}>上一页</button><button disabled={offset + jobs.length >= total} onClick={() => { setLoading(true); setOffset(offset + 50); setExpanded(null) }}>下一页</button></div>}
   </div>
 }

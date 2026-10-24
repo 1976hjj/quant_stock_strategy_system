@@ -9,7 +9,7 @@ const SEGMENT_NAMES: Record<UniverseSegment, string> = {
   SH_MAIN: '沪市主板', SZ_MAIN: '深市主板', CHINEXT: '创业板', STAR: '科创板', BSE: '北交所',
 }
 const STATUS_NAMES: Record<StrategyJobHistory['status'], string> = {
-  QUEUED: '等待队列中', RUNNING: '回测中', PASS: '已完成', FAIL: '失败', STOPPED: '已停止',
+  QUEUED: '等待队列中', RUNNING: '回测中', STOPPING: '正在停止', PASS: '已完成', FAIL: '失败', STOPPED: '已停止',
 }
 
 type SortKey = 'created_at' | 'rebalance_sessions' | 'total_return' | 'excess_return' | 'maximum_drawdown' | 'sharpe'

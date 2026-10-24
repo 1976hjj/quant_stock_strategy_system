@@ -174,6 +174,7 @@ export interface ShadowHealthSpec {
 }
 
 export interface StrategyRequest {
+  minimum_entry_score?: number | null
   take_profit_policy?: 'NONE' | 'GAIN_50_CLEAR'
   name: string
   start: string
@@ -250,6 +251,8 @@ export interface StrategyPreview {
 export type TakeProfit = { events: Array<{ event_id: number; ts_code: string; security_name?: string; signal_session: string; signal_gain: number; status: string; execution_session?: string; execution_price?: number; quantity?: number; cost_cny?: number; attempts: Array<{ session: string; quantity: number; filled: boolean }> }>; pending_at_end: string[] }
 
 export interface StrategyResult {
+  initial_cash_cny?: number
+  comparison_benchmark?: { benchmark_id: string; name: string; status: string; daily: Array<{ session: string; close: number }>; note?: string; missing_sessions?: number; coverage?: { start: string; end: string }; publication_date?: string } | null
   take_profit?: TakeProfit | null
   run_id: string
   created_at: string
@@ -400,8 +403,10 @@ export interface StrategyYearTrades {
 }
 
 export interface StrategyJob {
+  history_source?: 'STRATEGY' | 'QUALITY'
+  quality_strategy?: { strategy_id: string; category: string; version: number; schedule: string; allocation: string; fixed_exposure?: number | null; retained_rebalance_policy?: string; weight_training?: { start: string; end: string } | null; evidence_integrity?: string; parameters?: { minimum_entry_score?: number | null } }
   job_id: string
-  status: 'QUEUED' | 'RUNNING' | 'PASS' | 'FAIL' | 'STOPPED'
+  status: 'QUEUED' | 'RUNNING' | 'STOPPING' | 'PASS' | 'FAIL' | 'STOPPED'
   phase: string
   progress: number
   name: string
@@ -410,8 +415,8 @@ export interface StrategyJob {
   created_at?: string
   updated_at?: string
   request?: StrategyRequest | RotationRequest
-  strategy_type?: 'FACTOR' | 'ROTATION'
-  experiment_kind?: 'SINGLE_FACTOR' | 'MULTI_FACTOR' | 'ROTATION'
+  strategy_type?: 'FACTOR' | 'ROTATION' | 'QUALITY'
+  experiment_kind?: 'SINGLE_FACTOR' | 'MULTI_FACTOR' | 'ROTATION' | 'QUALITY'
   single_factor?: ScoreRule | null
   comparison_key?: string | null
   process_alive?: boolean
@@ -460,6 +465,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const strategyApi = {
+  historyStop: (jobId: string, source = 'STRATEGY') => request<StrategyJob>(source === 'QUALITY' ? `/quality-strategies/jobs/${encodeURIComponent(jobId)}/stop` : `/strategy/jobs/${encodeURIComponent(jobId)}/stop`, { method: 'POST', body: '{}' }),
+  history: (day: string, strategyType: string, offset = 0) => request<{ jobs: StrategyJobHistory[]; total: number; offset: number; limit: number }>(`/backtest-history?${new URLSearchParams({ day, strategy_type: strategyType, offset: String(offset), limit: '50' })}`),
+  historyStatus: (jobId: string, source = 'STRATEGY') => request<StrategyJob>(`/backtest-history/${source}/${encodeURIComponent(jobId)}`),
+  historyDelete: (jobId: string, source = 'STRATEGY') => request<{ job_id: string; deleted: boolean }>(`/backtest-history/${source}/${encodeURIComponent(jobId)}`, { method: 'DELETE' }),
+  historyReportUrl: (jobId: string, source = 'STRATEGY') => `${STRATEGY_API_ROOT}/backtest-history/${source}/${encodeURIComponent(jobId)}/report`,
+  historyTrades: (jobId: string, year: number, offset = 0, source = 'STRATEGY') => request<StrategyYearTrades>(`/backtest-history/${source}/${encodeURIComponent(jobId)}/trades?year=${year}&offset=${offset}`),
   health: () => request<{ status: string }>('/health'),
   options: () => request<StrategyOptions>('/strategy/options'),
   preflight: (payload: StrategyRequest) => request<StrategyPreflight>('/strategy/preflight', { method: 'POST', body: JSON.stringify(payload) }),

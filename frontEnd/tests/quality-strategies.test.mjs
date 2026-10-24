@@ -6,6 +6,110 @@ import QualityStrategies, { CalculationStatus, Curve, TakeProfitResults, Quality
 
 beforeEach(() => invalidateQualityReads())
 
+test('quality stop targets the running job, waits for server confirmation and leaves the previous account visible', async () => {
+  const originalWindow = globalThis.window; let tree; let finish; const calls = []
+  const running = { job_id: 'own-running-job', status: 'RUNNING', phase: '连续账户回放', progress: 40 }
+  const candidate = { ...items[2], latest_job: running }
+  globalThis.window = { ...originalWindow, localStorage: { getItem: () => null, setItem() {} } }
+  globalThis.fetch = async (url, options) => {
+    if (options?.method === 'POST') {
+      calls.push(String(url)); return new Promise(resolve => { finish = () => resolve({ ok: true, json: async () => ({ ...running, status: 'STOPPED' }) }) })
+    }
+    const path = String(url).split('?')[0].split('/api/v1/')[1]
+    return { ok: true, json: async () => path === 'quality-strategies'
+      ? { categories: [{ id: 'FACTOR_WEIGHTED', name: '因子加权' }], items: [candidate] } : detail(candidate) }
+  }
+  try {
+    await act(async () => { tree = renderer.create(React.createElement(QualityStrategies)); await Promise.resolve() })
+    await act(async () => { button(tree.root, '停止本次回测').props.onClick(); await Promise.resolve() })
+    assert.ok(calls[0].endsWith('/quality-strategies/jobs/own-running-job/stop'))
+    assert.equal(button(tree.root, '正在停止并清理').props.disabled, true)
+    await act(async () => { finish(); await Promise.resolve() })
+    assert.match(text(tree), /本次回测已停止，未完成结果已清理/)
+    assert.ok(button(tree.root, '回测／更新'))
+    assert.equal(tree.root.findAllByProps({ className: 'qs-stop-action' }).length, 0)
+  } finally { if (tree) await act(async () => tree.unmount()); globalThis.window = originalWindow }
+})
+
+test('entry score is an explicit job parameter; editing never relabels the previous account', async () => {
+  const oldWindow = globalThis.window; const storage = new Map(); const posts = []; let tree
+  globalThis.window = { ...oldWindow, localStorage: { getItem: k => storage.get(k) || null, setItem: (k,v) => storage.set(k,v) } }
+  const candidate = { ...items[2], supports_entry_score: true }
+  globalThis.fetch = async (url, options) => {
+    if (options?.method === 'POST') { posts.push(JSON.parse(options.body)); return { ok: true, json: async () => ({ job_id: 'floor', status: 'PASS' }) } }
+    const path = String(url).split('?')[0].split('/api/v1/')[1]
+    return { ok: true, json: async () => path === 'quality-strategies'
+      ? { categories: [{ id: 'FACTOR_WEIGHTED', name: '因子加权' }], items: [candidate] } : detail(candidate) }
+  }
+  try {
+    await act(async () => { tree = renderer.create(React.createElement(QualityStrategies)); await Promise.resolve() })
+    const controls = () => tree.root.findByProps({ 'aria-label': '入选评分设置' })
+    assert.equal(controls().findAllByType('input').length, 0)
+    await act(async () => button(controls(), '启用门槛').props.onClick())
+    assert.equal(tree.root.findByProps({ 'aria-label': '最低入选评分' }).props.value, '80')
+    assert.equal(posts.length, 0)
+    assert.match(nodeText(tree.root.findByProps({ className: 'qs-entry-score-result' })), /当前展示结果入选评分：不设门槛/)
+    await act(async () => { button(tree.root, '回测／更新').props.onClick(); await Promise.resolve() })
+    assert.equal(posts[0].minimum_entry_score, 80)
+    await act(async () => tree.root.findByProps({ 'aria-label': '最低入选评分' }).props.onChange({ target: { value: '101' } }))
+    await act(async () => { button(tree.root, '回测／更新').props.onClick(); await Promise.resolve() })
+    assert.equal(posts.length, 1)
+    assert.match(text(tree), /入选评分请填写0—100/)
+    await act(async () => button(controls(), '不设门槛').props.onClick())
+    await act(async () => { button(tree.root, '回测／更新').props.onClick(); await Promise.resolve() })
+    assert.equal(posts[1].minimum_entry_score, null)
+  } finally { if (tree) await act(async () => tree.unmount()); globalThis.window = oldWindow }
+})
+
+test('a recorded disabled floor stays disabled and decimal score drafts survive reopening', async () => {
+  const oldWindow = globalThis.window; const storage = new Map(); let tree
+  globalThis.window = { ...oldWindow, localStorage: { getItem: k => storage.get(k) || null, setItem: (k,v) => storage.set(k,v) } }
+  const candidate = { ...items[2], supports_entry_score: true }
+  globalThis.fetch = async url => {
+    const path = String(url).split('?')[0].split('/api/v1/')[1]
+    return { ok: true, json: async () => path === 'quality-strategies'
+      ? { categories: [{ id: 'FACTOR_WEIGHTED', name: '因子加权' }], items: [candidate] }
+      : { ...detail(candidate), request: { ...detail(candidate).request, minimum_entry_score: 80 }, signal: {
+        minimum_entry_score: null, calculation_mode: 'INCREMENTAL_LOCAL_INPUTS_V1', as_of: '2026-10-23', signal_date: '2026-09-30',
+        model_positions: [], targets: [], orders: [], warnings: [], input_bindings: [], historical_replay: { summary: metrics, daily: [], annual: [] },
+      } } }
+  }
+  try {
+    await act(async () => { tree = renderer.create(React.createElement(QualityStrategies)); await Promise.resolve() })
+    assert.equal(button(tree.root.findByProps({ 'aria-label': '入选评分设置' }), '不设门槛').props['aria-pressed'], true)
+    await act(async () => button(tree.root.findByProps({ 'aria-label': '入选评分设置' }), '启用门槛').props.onClick())
+    await act(async () => tree.root.findByProps({ 'aria-label': '最低入选评分' }).props.onChange({ target: { value: '82.5' } }))
+    await act(async () => tree.unmount())
+    await act(async () => { tree = renderer.create(React.createElement(QualityStrategies)); await Promise.resolve() })
+    assert.equal(tree.root.findByProps({ 'aria-label': '最低入选评分' }).props.value, '82.5')
+    assert.match(nodeText(tree.root.findByProps({ className: 'qs-entry-score-result' })), /当前展示结果入选评分：不设门槛/)
+  } finally { if (tree) await act(async () => tree.unmount()); globalThis.window = oldWindow }
+})
+
+test('historical presets submit independent 2010 accounts and preserve seed result dates', async () => {
+  const oldWindow = globalThis.window; const posts = []; let tree
+  globalThis.window = { ...oldWindow, localStorage: { getItem: () => null, setItem: () => {} } }
+  const candidate = { ...items[2], backtest_min_start: '2010-01-01' }
+  globalThis.fetch = async (url, options) => {
+    if (options?.method === 'POST') { posts.push(JSON.parse(options.body)); return { ok: true, json: async () => ({ job_id: 'history', status: 'PASS' }) } }
+    const path = String(url).split('?')[0].split('/api/v1/')[1]
+    return { ok: true, json: async () => path === 'quality-strategies'
+      ? { categories: [{ id: 'FACTOR_WEIGHTED', name: '因子加权' }], items: [candidate] } : detail(candidate) }
+  }
+  try {
+    await act(async () => { tree = renderer.create(React.createElement(QualityStrategies)); await Promise.resolve() })
+    assert.equal(tree.root.findByProps({ 'aria-label': '回测开始日' }).props.min, '2010-01-01')
+    await act(async () => button(tree.root, '2010—2015').props.onClick())
+    assert.equal(posts.length, 0, 'choosing dates alone must not launch a job')
+    await act(async () => { button(tree.root, '回测／更新').props.onClick(); await Promise.resolve() })
+    assert.equal(posts[0].start, '2010-01-01'); assert.equal(posts[0].as_of, '2015-12-31')
+    await act(async () => button(tree.root, '2010至最新').props.onClick())
+    await act(async () => { button(tree.root, '回测／更新').props.onClick(); await Promise.resolve() })
+    assert.equal(posts[1].start, '2010-01-01'); assert.equal(posts[1].as_of, null)
+    assert.match(text(tree), /训练前历史对照/)
+  } finally { if (tree) await act(async () => tree.unmount()); globalThis.window = oldWindow }
+})
+
 test('CSI2000 comparison preserves account baseline through zoom and leaves data gaps open', async () => {
   const daily = ['2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22'].map((session, i) => ({ session, nav: 100 + i * 10 }))
   const benchmark = { benchmark_id: 'CSI2000', name: '中证2000', status: 'OK', daily: [

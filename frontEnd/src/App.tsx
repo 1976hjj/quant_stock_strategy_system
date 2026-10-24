@@ -465,7 +465,7 @@ export default function App() {
 
       {error && <div className="error-banner"><b>没有继续执行</b><span>{error}</span><button onClick={() => setError('')}>×</button></div>}
 
-      {view === 'QUALITY' ? <QualityStrategies /> : view === 'DATA' ? <DataManager /> : view === 'STRATEGY' ? <StrategyBacktest /> : view === 'ROTATION' ? <RotationBacktest onOpenFactorCalculate={() => setView('CALCULATE')} onOpenHistory={() => setView('STRATEGY_HISTORY')} /> : view === 'SINGLE_FACTOR_REPORTS' ? <SingleFactorReports onOpenRunning={() => setView('STRATEGY')} /> : view === 'STRATEGY_HISTORY' ? <StrategyBacktestHistory onOpenRunning={(strategyType) => setView(strategyType === 'ROTATION' ? 'ROTATION' : 'STRATEGY')} /> : view === 'CALCULATE' ? <>
+      {view === 'QUALITY' ? <QualityStrategies /> : view === 'DATA' ? <DataManager /> : view === 'STRATEGY' ? <StrategyBacktest /> : view === 'ROTATION' ? <RotationBacktest onOpenFactorCalculate={() => setView('CALCULATE')} onOpenHistory={() => setView('STRATEGY_HISTORY')} /> : view === 'SINGLE_FACTOR_REPORTS' ? <SingleFactorReports onOpenRunning={() => setView('STRATEGY')} /> : view === 'STRATEGY_HISTORY' ? <StrategyBacktestHistory onOpenRunning={(strategyType) => setView(strategyType === 'QUALITY' ? 'QUALITY' : strategyType === 'ROTATION' ? 'ROTATION' : 'STRATEGY')} /> : view === 'CALCULATE' ? <>
       <FactorLibrary selected={selectedFactor} onSelect={chooseFactor} refreshKey={catalogRefresh}
         batchMode={batchMode} batchSelected={batchSelected} onBatchModeChange={setBatchMode}
         onBatchToggle={(factor) => setBatchSelected((current) => {
