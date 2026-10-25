@@ -11,9 +11,13 @@ export interface DataGroup {
   start: string | null
   end: string | null
   partitions: Record<string, number>
-  datasets: Array<{ id: string; start: string | null; end: string | null; partitions: number }>
+  datasets: Array<{ id: string; start: string | null; end: string | null; partitions: number; rows?: number }>
   published: boolean
   last_collected_at?: string | null
+  source_label?: string
+  record_count?: number
+  history_start_reason?: string | null
+  availability_note?: string
   bank_count?: number
   expected_banks?: number
   history_rows?: number
