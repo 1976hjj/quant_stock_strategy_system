@@ -64,7 +64,8 @@ function duration(seconds: number | null | undefined) {
 }
 
 function factorName(options: StrategyOptions | null, factorId: string) {
-  return options?.factors.find((item) => item.factor_id === factorId)?.chinese_name || factorId
+  return [...(options?.factors || []), ...(options?.display_factors || [])]
+    .find((item) => item.factor_id === factorId)?.chinese_name || factorId
 }
 
 function factorById(options: StrategyOptions, factorId: string) {

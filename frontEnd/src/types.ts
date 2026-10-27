@@ -97,6 +97,7 @@ export interface FactorCatalogItem {
   observation_level?: 'STOCK' | 'SECTOR'
   research_batch?: 1 | 2
   compute_supported?: boolean
+  display_only?: boolean
   m4_supported?: boolean
   output_components?: string[]
   parameters?: Record<string, number | string>

@@ -162,7 +162,7 @@ export default function SingleFactorReports({ onOpenRunning }: { onOpenRunning: 
     try {
       const [history, options] = await Promise.all([strategyApi.list('single-factor'), strategyApi.options()])
       setJobs(history.jobs)
-      setFactorOptions(options.factors)
+      setFactorOptions([...options.factors, ...(options.display_factors || [])])
       setError('')
       setRefreshedAt(new Date().toLocaleTimeString('zh-CN', { hour12: false }))
     } catch (reason) {

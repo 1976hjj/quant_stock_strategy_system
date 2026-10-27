@@ -209,6 +209,7 @@ export interface StrategyRequest {
 export type UniverseSegment = 'SH_MAIN' | 'SZ_MAIN' | 'CHINEXT' | 'STAR' | 'BSE'
 
 export interface StrategyOptions {
+  display_factors?: StrategyFactorOption[]
   factors: StrategyFactorOption[]
   universes: Array<{ id: string; name: string }>
   universe_segments: Array<{ id: UniverseSegment; name: string }>

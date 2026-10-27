@@ -228,7 +228,7 @@ export default function FactorLibrary({ selected, onSelect, refreshKey = 0, batc
             }
             batchMode ? onBatchToggle(factor) : onSelect(factor)
           }}>
-            {factor.compute_supported === false ? '查看指标定义' : batchMode ? batchSelected[factor.factor_id] ? '✓ 已加入批次' : '加入本次批次' : selected?.factor_id === factor.factor_id ? '✓ 已选为本次运行对象' : factor.calculated ? '选择并复现这个因子' : '选择并计算这个因子'}
+            {factor.compute_supported === false ? '查看因子定义' : batchMode ? batchSelected[factor.factor_id] ? '✓ 已加入批次' : '加入本次批次' : selected?.factor_id === factor.factor_id ? '✓ 已选为本次运行对象' : factor.calculated ? '选择并复现这个因子' : '选择并计算这个因子'}
           </button>
 
           {factor.result ? <>
@@ -238,7 +238,7 @@ export default function FactorLibrary({ selected, onSelect, refreshKey = 0, batc
               <div><span>千万资金成交率</span><strong>{percent(factor.result.fill_rate_10m)}</strong></div>
             </div>
             <div className={`factor-conclusion ${factor.result.tone}`}>{factor.result.conclusion}</div>
-          </> : <div className="not-computed"><span>{factor.observation_level === 'SECTOR' && factor.calculated ? '板块研究值已生成，尚无收益检验结果' : '尚无数值和收益检验结果'}</span><b>{factor.calculated ? '已算值' : factor.compute_supported === false ? '已接入定义' : '等待计算'}</b></div>}
+          </> : <div className="not-computed"><span>{factor.display_only ? '研究值与单因子报告已归档' : factor.observation_level === 'SECTOR' && factor.calculated ? '板块研究值已生成，尚无收益检验结果' : '尚无数值和收益检验结果'}</span><b>{factor.calculated ? '已算值' : factor.compute_supported === false ? '已接入定义' : '等待计算'}</b></div>}
 
           <details open={factor.compute_supported === false ? definitionId === factor.factor_id : undefined}
             onToggle={(event) => {
