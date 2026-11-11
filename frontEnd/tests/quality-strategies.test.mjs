@@ -6,6 +6,148 @@ import QualityStrategies, { CalculationStatus, Curve, TakeProfitResults, Quality
 
 beforeEach(() => invalidateQualityReads())
 
+test('ratio curve colors follow executed holdings with connected mixed and cash segments', async () => {
+  const holding = (code, value = 100) => ({ ts_code: code, quantity: 100, market_value_cny: value })
+  const daily = [
+    { session: '2024-01-02', nav: 100, holdings: [] },
+    { session: '2024-01-03', nav: 101, holdings: [holding('159915.SZ')], state: 'DIVIDEND' },
+    { session: '2024-01-04', nav: 102, holdings: [holding('399606.SZ')], state: 'DIVIDEND' },
+    { session: '2024-01-05', nav: 103, holdings: [holding('159915.SZ', 50), holding('563020.SH', 50)] },
+    { session: '2024-01-08', nav: 104, holdings: [holding('H20269.CSI')] },
+    { session: '2024-01-09', nav: 105, holdings: [holding('563020.SH')] },
+    { session: '2024-01-10', nav: 106, holdings: [] },
+  ]
+  let tree
+  try {
+    await act(async () => { tree = renderer.create(React.createElement(Curve, { daily, colorByStyle: true })) })
+    const segments = tree.root.findAllByProps({ className: 'qs-style-nav-line' })
+    assert.deepEqual(segments.map(segment => segment.props['data-holding-style']), ['GROWTH', 'MIXED', 'DIVIDEND', 'CASH'])
+    assert.deepEqual(segments.map(segment => segment.props.stroke), ['#2563eb', '#7c3aed', '#dc2626', '#9ca3af'])
+    assert.deepEqual(segments.map(segment => segment.props['data-end-session']),
+      ['2024-01-04', '2024-01-05', '2024-01-09', '2024-01-10'])
+    for (let index = 1; index < segments.length; index++) {
+      assert.equal(segments[index].props.points.split(' ')[0], segments[index - 1].props.points.split(' ').at(-1))
+    }
+    const legend = nodeText(tree.root.findByProps({ 'aria-label': '净值曲线图例' }))
+    for (const label of ['成长持仓', '红利持仓', '共同持仓', '空仓']) assert.ok(legend.includes(label))
+    const chart = tree.root.findByProps({ className: 'qs-curve' })
+    await act(async () => chart.props.onKeyDown({ key: 'Home', preventDefault() {} }))
+    await act(async () => chart.props.onKeyDown({ key: 'ArrowRight', preventDefault() {} }))
+    const marker = () => tree.root.findByProps({ className: 'qs-curve-crosshair' }).findAllByType('circle')[0]
+    assert.equal(marker().props.fill, '#2563eb')
+    await act(async () => chart.props.onKeyDown({ key: 'ArrowRight', preventDefault() {} }))
+    await act(async () => chart.props.onKeyDown({ key: 'ArrowRight', preventDefault() {} }))
+    assert.equal(marker().props.fill, '#7c3aed')
+    await act(async () => tree.update(React.createElement(Curve, { daily })))
+    assert.equal(tree.root.findAllByProps({ className: 'qs-style-nav-line' }).length, 0)
+    assert.equal(tree.root.findByProps({ className: 'qs-curve' }).findAllByType('polyline')[0].props.stroke, '#176648')
+  } finally {
+    if (tree) await act(async () => tree.unmount())
+  }
+})
+
+test('ratio rotation saves its own parameters and submits the selected historical account range', async () => {
+  const originalWindow = globalThis.window
+  const storage = new Map()
+  const posts = []
+  let tree
+  const settings = { data_mode: 'INDEX_PROXY', ma_sessions: 20, buffer_fraction: .015 }
+  const candidate = { ...items[0], strategy_id: 'chinext-dividend-lowvol-ratio', category: 'STYLE_ROTATION',
+    strategy_kind: 'CHINEXT_DIVIDEND_RATIO', name: '创业板红利低波 · 比值轮动',
+    ratio_defaults: settings, ratio_data_end: '2026-11-06', start: '2016-01-01', backtest_min_start: '2016-01-01' }
+  const saved = { ...detail(candidate), calculation_state: 'UP_TO_DATE', signal: {
+    calculation_mode: 'CHINEXT_DIVIDEND_RATIO_V1', ratio_parameters: settings,
+    as_of: '2026-11-06', signal_date: '2026-11-06', due: false, target_exposure: 1,
+    model_positions: [], targets: [], orders: [], warnings: [], input_bindings: [],
+    ratio_rotation: { parameters: settings, market_as_of: '2026-11-06', current_state: 'DIVIDEND',
+      latest: { session: '2026-11-06', ratio: .3, moving_average: .31, deviation: -.032, state: 'DIVIDEND' }, switches: [] },
+    historical_replay: { summary: metrics, annual: [], initial_cash_cny: 100,
+      comparison_benchmark: { name: '创业板全收益指数（代理）', status: 'OK',
+        daily: [{ session: '2016-01-04', close: 1 }, { session: '2026-11-06', close: 2 }] },
+      daily: [{ session: '2016-01-04', nav: 100, cash: 100, positions: 0, holdings: [] },
+        { session: '2026-11-06', nav: 200, cash: 200, positions: 0, holdings: [] }] } } }
+  globalThis.window = { ...originalWindow, localStorage: {
+    getItem: key => storage.get(key) || null, setItem: (key, value) => storage.set(key, value),
+  } }
+  globalThis.fetch = async (url, options) => {
+    if (options?.method === 'POST') {
+      posts.push(JSON.parse(options.body))
+      return { ok: true, json: async () => ({ job_id: 'ratio-test', status: 'RUNNING', calculation_mode: 'CHINEXT_DIVIDEND_RATIO_V1' }) }
+    }
+    const listing = String(url).split('?')[0].endsWith('/quality-strategies')
+    return { ok: true, json: async () => listing
+      ? { categories: [{ id: 'STYLE_ROTATION', name: '风格轮动' }], items: [candidate] } : saved }
+  }
+  try {
+    await act(async () => { tree = renderer.create(React.createElement(QualityStrategies)); await Promise.resolve() })
+    assert.equal(tree.root.findByProps({ 'aria-label': '比值均线周期' }).props.value, 20)
+    assert.equal(tree.root.findByProps({ 'aria-label': '比值缓冲带' }).props.value, 1.5)
+    assert.ok(tree.root.findByProps({ 'aria-label': '最新明细' }))
+    assert.ok(tree.root.findByProps({ 'aria-label': '创业板全收益指数（代理）对照曲线' }))
+    assert.equal(tree.root.findAllByProps({ 'aria-label': '风格轮动参数' }).length, 0)
+    await act(async () => button(tree.root, '原研究近十年').props.onClick())
+    assert.equal(tree.root.findByProps({ 'aria-label': '回测开始日' }).props.value, '2016-11-10')
+    assert.equal(tree.root.findAllByProps({ type: 'date' })[1].props.value, '2026-11-06')
+    assert.equal(tree.root.findByProps({ 'aria-label': '比值均线周期' }).props.value, 20)
+    await act(async () => tree.root.findByProps({ 'aria-label': '比值均线周期' }).props.onChange({ target: { value: '30' } }))
+    assert.match(text(tree), /参数已修改/)
+    assert.equal(posts.length, 0)
+    const draft = JSON.parse(storage.get('alpha-research.quality-ranges'))[candidate.strategy_id]
+    assert.equal(draft.ratio_parameters.ma_sessions, 30)
+    await act(async () => tree.root.findByProps({ 'aria-label': '比值回测数据口径' }).props.onChange({ target: { value: 'ETF' } }))
+    assert.equal(tree.root.findByProps({ 'aria-label': '回测开始日' }).props.value, '2024-01-02')
+    await act(async () => tree.root.findAllByType('button').find(node => nodeText(node) === '2016至数据最新日').props.onClick())
+    assert.equal(tree.root.findByProps({ 'aria-label': '比值回测数据口径' }).props.value, 'INDEX_PROXY')
+    await act(async () => { button(tree.root, '回测／更新').props.onClick(); await Promise.resolve() })
+    assert.equal(posts[0].start, '2016-01-01')
+    assert.deepEqual(posts[0].ratio_parameters, { ...settings, ma_sessions: 30 })
+    assert.ok(!('rotation_parameters' in posts[0]))
+    assert.deepEqual(posts[0].current_holdings, [])
+  } finally {
+    if (tree) await act(async () => tree.unmount())
+    globalThis.window = originalWindow
+  }
+})
+
+test('ETF style rotation freezes submitted parameters, persists drafts and displays its own account', async () => {
+  const oldWindow=globalThis.window; const storage=new Map(); const posts=[]; let tree
+  const settings={mode:'SOFT',entry_drawdown:.15,recovery_drawdown:.05,growth_weight:.75,
+    defensive_growth_weight:.25,include_star:true,monthly_rebalance:true,initial_state:'G',
+    commission_bps:2,minimum_commission:5,slippage_bps:2,participation_rate:.01,
+    refresh_market:true,refresh_bank_signal:true}
+  const candidate={...items[0],strategy_id:'bank-drawdown-etf-rotation',name:'银行回撤ETF轮动',
+    category:'STYLE_ROTATION',strategy_kind:'ETF_STYLE_ROTATION',rotation_defaults:settings,
+    latest_calculation_mode:'ETF_STYLE_ROTATION_V1',latest_summary:metrics,start:'2024-01-02',target_count:4}
+  const result={...detail(candidate),calculation_state:'UP_TO_DATE',signal:{calculation_mode:'ETF_STYLE_ROTATION_V1',
+    capital_cny:1000000,as_of:'2026-10-30',signal_date:'2026-10-30',due:false,target_exposure:1,
+    model_positions:[],targets:[],orders:[],warnings:[],input_bindings:[],rotation_parameters:settings,
+    rotation:{parameters:settings,bank_signal_as_of:'2026-10-30',bank_signal_start:'2020-01-02',
+      market_as_of:'2026-10-30',current_state:'G',bank_drawdown:.02,target_weights:{159915:.375,588000:.375,512800:.125,512890:.125},switches:[]},
+    historical_replay:{summary:metrics,daily:[{session:'2024-01-02',nav:1000000,cash:1000000,holdings:[],positions:0},
+      {session:'2026-10-30',nav:1300000,cash:1000,holdings:[],positions:0}],annual:[],initial_cash_cny:1000000}}}
+  globalThis.window={...oldWindow,localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v)}}
+  globalThis.fetch=async(url,options)=>{
+    if(options?.method==='POST'){posts.push(JSON.parse(options.body));return {ok:true,json:async()=>({job_id:'rotation-test',status:'RUNNING',progress:0,calculation_mode:'ETF_STYLE_ROTATION_V1'})}}
+    const path=String(url).split('?')[0].split('/api/v1/')[1]
+    return {ok:true,json:async()=>path==='quality-strategies'?{categories:[{id:'STYLE_ROTATION',name:'风格轮动'}],items:[candidate]}:result}
+  }
+  try {
+    await act(async()=>{tree=renderer.create(React.createElement(QualityStrategies));await Promise.resolve()})
+    assert.ok(tree.root.findByProps({'aria-label':'风格轮动参数'}))
+    assert.ok(tree.root.findByProps({'aria-label':'轮动信号与切换明细'}))
+    assert.ok(tree.root.findByProps({'aria-label':'最新明细'}))
+    await act(async()=>tree.root.findByProps({'aria-label':'转防守回撤阈值'}).props.onChange({target:{value:'25'}}))
+    assert.equal(posts.length,0)
+    assert.match(text(tree),/参数已修改/)
+    assert.equal(JSON.parse(storage.get('alpha-research.quality-ranges'))[candidate.strategy_id].rotation_parameters.entry_drawdown,.25)
+    await act(async()=>{button(tree.root,'回测／更新').props.onClick();await Promise.resolve()})
+    assert.equal(posts[0].rotation_parameters.entry_drawdown,.25)
+    assert.equal(posts[0].rotation_parameters.refresh_bank_signal,true)
+    assert.equal(posts[0].start,'2024-01-02')
+    assert.ok(tree.root.findByProps({'aria-label':'轮动回测运行状态'}))
+  } finally {if(tree)await act(async()=>tree.unmount());globalThis.window=oldWindow}
+})
+
 test('quality stop targets the running job, waits for server confirmation and leaves the previous account visible', async () => {
   const originalWindow = globalThis.window; let tree; let finish; const calls = []
   const running = { job_id: 'own-running-job', status: 'RUNNING', phase: '连续账户回放', progress: 40 }
@@ -769,20 +911,27 @@ test('fixed latest details equal the final crosshair snapshot and stay fixed whe
   }finally{if(tree)await act(async()=>tree.unmount())}
 })
 
-test('shared holding disclosures start collapsed and opening the cursor details pins its own date',async()=>{
+test('shared holding disclosures default open, persist both choices and pin the cursor date',async()=>{
+  const originalWindow = globalThis.window
+  const storage = new Map()
+  globalThis.window = { ...originalWindow, localStorage: {
+    getItem: key => storage.get(key) ?? null,
+    setItem: (key, value) => storage.set(key, value),
+  } }
+  const properties = { showLatestDetails: true, initialCash: 100, daily: [
+    { session: '2026-10-21', nav: 100, cash: 50, positions: 1, holdings: [{ ts_code: 'A', quantity: 10, market_value_cny: 50 }] },
+    { session: '2026-10-22', nav: 110, cash: 50, positions: 1, holdings: [{ ts_code: 'A', quantity: 10, market_value_cny: 60 }] },
+  ] }
   let tree
   try{
-    await act(async()=>{tree=renderer.create(React.createElement(Curve,{showLatestDetails:true,initialCash:100,daily:[
-      {session:'2026-10-21',nav:100,cash:50,positions:1,holdings:[{ts_code:'A',quantity:10,market_value_cny:50}]},
-      {session:'2026-10-22',nav:110,cash:50,positions:1,holdings:[{ts_code:'A',quantity:10,market_value_cny:60}]},
-    ]}))})
+    await act(async()=>{tree=renderer.create(React.createElement(Curve,properties))})
     const svg=tree.root.findByProps({className:'qs-curve'})
     await act(async()=>svg.props.onFocus())
     const cursor=()=>tree.root.findByProps({role:'tooltip'})
     const latest=tree.root.findByProps({'aria-label':'最新明细'})
     for(const panel of [cursor(),latest]){
       const disclosure=panel.findByProps({className:'qs-tooltip-holdings'})
-      assert.equal(disclosure.type,'details');assert.equal(!!disclosure.props.open,false)
+      assert.equal(disclosure.type,'details');assert.equal(disclosure.props.open,true)
       assert.equal(disclosure.findAllByType('summary').length,1)
       assert.equal(disclosure.findAllByType('footer').length,1)
       assert.equal(panel.findAllByType('dl').length,1)
@@ -793,8 +942,22 @@ test('shared holding disclosures start collapsed and opening the cursor details 
     assert.equal(cursor().props['data-pinned'],true)
     await act(async()=>svg.props.onBlur())
     assert.equal(cursor().findByType('header').findByType('b').children[0],'2026-10-22')
-    assert.equal(!!latest.findByProps({className:'qs-tooltip-holdings'}).props.open,false)
-  }finally{if(tree)await act(async()=>tree.unmount())}
+    await act(async () => cursor().findByProps({ className: 'qs-tooltip-holdings' }).props.onToggle({ currentTarget: { open: false } }))
+    assert.equal(latest.findByProps({ className: 'qs-tooltip-holdings' }).props.open, false)
+    assert.equal(storage.get('alpha-research.quality-holdings-open'), 'false')
+    await act(async () => tree.unmount())
+    await act(async () => { tree = renderer.create(React.createElement(Curve, properties)) })
+    const disclosure = () => tree.root.findByProps({ 'aria-label': '最新明细' }).findByProps({ className: 'qs-tooltip-holdings' })
+    assert.equal(disclosure().props.open, false)
+    await act(async () => disclosure().props.onToggle({ currentTarget: { open: true } }))
+    assert.equal(storage.get('alpha-research.quality-holdings-open'), 'true')
+    await act(async () => tree.unmount())
+    await act(async () => { tree = renderer.create(React.createElement(Curve, properties)) })
+    assert.equal(disclosure().props.open, true)
+  }finally{
+    if(tree)await act(async()=>tree.unmount())
+    globalThis.window = originalWindow
+  }
 })
 
 test('latest details show final-day cash or missing holdings without falling back to an earlier stock list', async()=>{

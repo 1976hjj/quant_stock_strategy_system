@@ -3,9 +3,57 @@ import { dataApi } from './dataApi'
 import DataMaintenance from './DataMaintenance'
 import DataUpdateProgress from './DataUpdateProgress'
 import LhbDataSummary from './LhbDataSummary'
-import type { DataInventory, DataJob, DataPlan, DataUpdateRequest } from './dataApi'
+import type { DataGroup, DataInventory, DataJob, DataPlan, DataUpdateRequest } from './dataApi'
 
 function dateLabel(value: string | null) { return value || '尚无记录' }
+
+const rotationDatasetNames: Record<string, string> = {
+  csi300_daily: '沪深300价格指数', daily: '股票日行情', adj_factor: '股票复权因子', daily_basic: '股票估值',
+  '159915.SZ': '创业板ETF · 159915', '588000.SH': '科创50ETF · 588000',
+  '512800.SH': '银行ETF · 512800', '512890.SH': '红利低波ETF · 512890',
+  '563020.SH': '红利低波ETF · 563020', '399006.SZ': '创业板价格指数 · 399006',
+  '399606.SZ': '创业板全收益指数 · 399606', 'H30269.CSI': '红利低波价格指数 · H30269',
+  'H20269.CSI': '红利低波全收益指数 · H20269',
+}
+
+const groupDescriptions: Record<string, string> = {
+  market: '股票与ETF行情、估值、复权及分红校验。',
+  benchmark: '宽基、成长与红利低波指数，含价格及全收益口径。',
+}
+
+function DataCoverageGroups({ group }: { group: DataGroup }) {
+  const definitions = group.id === 'benchmark'
+    ? [
+      { name: '宽基指数', ids: ['csi300_daily'] },
+      { name: '创业板指数', ids: ['399006.SZ', '399606.SZ'] },
+      { name: '红利低波指数', ids: ['H30269.CSI', 'H20269.CSI'] },
+    ]
+    : [
+      { name: '股票行情与估值', ids: ['daily', 'adj_factor', 'daily_basic'] },
+      { name: '成长ETF', ids: ['159915.SZ', '588000.SH'] },
+      { name: '银行ETF', ids: ['512800.SH'] },
+      { name: '红利低波ETF', ids: ['512890.SH', '563020.SH'] },
+    ]
+  const known = new Set(definitions.flatMap(item => item.ids))
+  const categories = [...definitions, { name: '其他数据', ids: group.datasets.filter(item => !known.has(item.id)).map(item => item.id) }]
+    .map(category => ({ ...category, items: group.datasets.filter(item => category.ids.includes(item.id)) }))
+    .filter(category => category.items.length)
+  return <details className="data-datasets data-datasets-grouped">
+    <summary>查看分类数据日期</summary>
+    <div>{categories.map(category => {
+      const ends = category.items.map(item => item.end)
+      const end = ends.every(Boolean) ? [...ends].sort()[0] : null
+      return <details className="data-coverage-category" key={category.name}>
+        <summary><b>{category.name}</b><small>{category.items.length}项 · 截至{end || '尚无完整记录'}</small></summary>
+        <div>{category.items.map(item => <div className="data-coverage-row" key={item.id}>
+          <b>{rotationDatasetNames[item.id] || item.id}</b>
+          <small>{dateLabel(item.start)} → {dateLabel(item.end)}</small>
+        </div>)}</div>
+      </details>
+    })}</div>
+  </details>
+}
+
 export default function DataManager() {
   const [inventory, setInventory] = useState<DataInventory | null>(null)
   const [loading, setLoading] = useState(true)
@@ -121,7 +169,7 @@ export default function DataManager() {
       <section className="data-panel"><div className="data-section-title"><span>01</span><div><h2>通用数据</h2><p>{sourceId === 'eastmoney' ? '当前免费源覆盖42家银行的财报指标。报告期与采集日期分别展示；最新版本归档到银行专用暂存库。' : '标记“策略必需”的项目默认勾选。取消后仍可更新其余数据，但不能认为目标日期已具备完整回测输入。'}</p></div></div>
         <div className={`data-group-grid ${sourceId === 'eastmoney' ? 'free-data-grid' : ''}`}>{visibleGroups.map((group) => <div className={`data-group ${selectedGroups.includes(group.id) ? 'selected' : ''}`} key={group.id}>
           <input id={`data-${group.id}`} type="checkbox" checked={selectedGroups.includes(group.id)} disabled={job?.status === 'RUNNING'} onChange={() => toggle(group.id, selectedGroups, setSelectedGroups)} />
-          <div><label htmlFor={`data-${group.id}`} className="data-group-name"><b>{group.name}</b>{group.required_for_strategy && <em>策略必需</em>}{group.source_id === 'eastmoney' && <em>免费 · 无需 Token</em>}{!group.published && <em className="pending">{sourceId === 'eastmoney' ? '待采集' : '待发布'}</em>}</label>{!group.id.startsWith('lhb_') && <p>{group.description}</p>}<small>{sourceId === 'eastmoney' ? '财报期覆盖' : '归档覆盖'} {dateLabel(group.start)} → {dateLabel(group.end)}</small><LhbDataSummary group={group} />{sourceId === 'eastmoney' && <div className="bank-data-summary"><b>{group.bank_count ?? 0}/{group.expected_banks ?? 42} 家银行 · {(group.history_rows ?? 0).toLocaleString()} 条财报记录</b><span>最新五项完整：{group.current_complete_banks ?? 0}/{group.expected_banks ?? 42} 家</span><span>最近采集：{group.last_collected_at ? new Date(group.last_collected_at).toLocaleString('zh-CN', { hour12: false }) : '尚未采集'}</span><span>{group.quality_label}</span><span>历史待复核 {group.quality_flag_rows ?? 0} 条，其中缺少公告日 {group.missing_notice_rows ?? 0} 条</span></div>}{!!group.datasets.length && <details className="data-datasets"><summary>查看 {group.datasets.length} 项数据日期</summary><div>{group.datasets.map((item) => <span key={item.id}><b>{({ npl_ratio: '不良贷款率', provision_coverage_ratio: '拨备覆盖率', cet1_ratio: '核心一级资本充足率', capital_adequacy_ratio: '资本充足率', net_interest_margin: '净息差' } as Record<string, string>)[item.id] || item.id}</b> {dateLabel(item.start)} → {dateLabel(item.end)} <i>{item.partitions.toLocaleString()} {sourceId === 'eastmoney' ? '条指标记录' : '分区'}</i></span>)}</div></details>}</div>
+          <div><label htmlFor={`data-${group.id}`} className="data-group-name"><b>{group.name}</b>{group.required_for_strategy && <em>策略必需</em>}{group.source_id === 'eastmoney' && <em>免费 · 无需 Token</em>}{!group.published && <em className="pending">{sourceId === 'eastmoney' ? '待采集' : '待发布'}</em>}</label>{!group.id.startsWith('lhb_') && <p>{groupDescriptions[group.id] || group.description}</p>}<small>{sourceId === 'eastmoney' ? '财报期覆盖' : '归档覆盖'} {dateLabel(group.start)} → {dateLabel(group.end)}</small><LhbDataSummary group={group} />{sourceId === 'eastmoney' && <div className="bank-data-summary"><b>{group.bank_count ?? 0}/{group.expected_banks ?? 42} 家银行 · {(group.history_rows ?? 0).toLocaleString()} 条财报记录</b><span>最新五项完整：{group.current_complete_banks ?? 0}/{group.expected_banks ?? 42} 家</span><span>最近采集：{group.last_collected_at ? new Date(group.last_collected_at).toLocaleString('zh-CN', { hour12: false }) : '尚未采集'}</span><span>{group.quality_label}</span><span>历史待复核 {group.quality_flag_rows ?? 0} 条，其中缺少公告日 {group.missing_notice_rows ?? 0} 条</span></div>}{!!group.datasets.length && ((group.id === 'market' || group.id === 'benchmark') ? <DataCoverageGroups group={group} /> : <details className="data-datasets"><summary>查看 {group.datasets.length} 项数据日期</summary><div>{group.datasets.map((item) => <span key={item.id}><b>{({ npl_ratio: '不良贷款率', provision_coverage_ratio: '拨备覆盖率', cet1_ratio: '核心一级资本充足率', capital_adequacy_ratio: '资本充足率', net_interest_margin: '净息差' } as Record<string, string>)[item.id] || rotationDatasetNames[item.id] || item.id}</b> {dateLabel(item.start)} → {dateLabel(item.end)} <i>{item.partitions.toLocaleString()} {sourceId === 'eastmoney' ? '条指标记录' : rotationDatasetNames[item.id] ? '个交易日' : '分区'}</i></span>)}</div></details>)}</div>
         </div>)}</div>
       <div className="data-update-settings"><div className="data-section-title"><div><h3>通用数据 · 更新参数</h3><p>{sourceId === 'eastmoney' ? '更新截至所选日期已公告的银行财报，并保留本次采集版本。每天可刷新；财报事实按公告和更正变化，并发最多2路。' : '仅更新上方勾选的通用数据。结束日期包含当天；尚未发布的交易数据会在预检或拉取阶段提示。数据更新期间暂停启动新回测。'}</p></div></div>
         <div className="data-settings"><label>{sourceId === 'eastmoney' ? '公告截止日期' : '更新至'}<input type="date" max={sourceId === 'eastmoney' ? inventory.today : inventory.latest_complete_day} value={target} disabled={job?.status === 'RUNNING'} onChange={(event) => { setTarget(event.target.value); setPlan(null) }} /></label><label>并发请求<input type="number" min="1" max={sourceId === 'eastmoney' ? '2' : '8'} value={workers} disabled={job?.status === 'RUNNING'} onChange={(event) => { setWorkers(Number(event.target.value)); setPlan(null) }} /></label><label>磁盘安全下限 GiB<input type="number" min="1" max="500" value={freeGb} disabled={job?.status === 'RUNNING'} onChange={(event) => { setFreeGb(Number(event.target.value)); setPlan(null) }} /></label>{sourceId === 'tushare' && <><label>请求间隔 ms<input type="number" min="0" max="5000" value={sleepMs} disabled={job?.status === 'RUNNING'} onChange={(event) => { setSleepMs(Number(event.target.value)); setPlan(null) }} /></label><label>刷新最近财报期<input type="number" min="0" max="4" value={refreshPeriods} disabled={job?.status === 'RUNNING'} onChange={(event) => { setRefreshPeriods(Number(event.target.value)); setPlan(null) }} /></label></>}</div>
