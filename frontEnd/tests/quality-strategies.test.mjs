@@ -3,6 +3,61 @@ import { test, beforeEach } from 'node:test'
 import React, { act } from 'react'
 import renderer from 'react-test-renderer'
 import QualityStrategies, { CalculationStatus, Curve, TakeProfitResults, QualityTradePlan, preloadQualityStrategies, readQuality, invalidateQualityReads } from '../.quality-test-build/QualityStrategies.js'
+import { RatioNextSignal } from '../.quality-test-build/QualityStrategies.js'
+import { RatioHistoryPosition } from '../.quality-test-build/QualityStrategies.js'
+
+test('ratio history distribution uses its account window, interpolates quantiles and handles flat or missing history', async () => {
+  const observations = [1, 2, 4, 5, 3].map((ratio, i) => ({ session: `2026-01-${String(i + 5).padStart(2, '0')}`, ratio }))
+  observations.push({ session: '2026-01-12', ratio: 100 })
+  const latest = { session: '2026-01-09', ratio: 3, moving_average: 3.5, deviation: -.14 }
+  let tree
+  try {
+    await act(async () => { tree = renderer.create(React.createElement(RatioHistoryPosition, { observations, latest, maSessions: 20 })) })
+    const label = tree.root.findByProps({ role: 'img' }).props['aria-label']
+    assert.match(label, /历史百分位50.0%/)
+    assert.match(label, /最低1.0000，最高5.0000/)
+    assert.match(nodeText(tree.root), /5个交易日/)
+    assert.equal(tree.root.findByProps({ className: 'qs-ratio-current-marker' }).props.style.left, '50%')
+    assert.equal(tree.root.findByProps({ className: 'qs-ratio-mean-marker' }).props.style.left, '62.5%')
+    const bands = tree.root.findAllByProps({ className: 'qs-ratio-percentile-band' })
+    assert.equal(bands.length, 6)
+    assert.match(bands[0].props.title, /1.0000—1.4000/)
+    await act(async () => tree.update(React.createElement(RatioHistoryPosition, {
+      observations: observations.slice(0, 5).map(row => ({ ...row, ratio: 3 })), latest, maSessions: 20 })))
+    assert.match(tree.root.findByProps({ role: 'img' }).props['aria-label'], /历史百分位50.0%/)
+    assert.ok(!nodeText(tree.root).includes('NaN'))
+    await act(async () => tree.update(React.createElement(RatioHistoryPosition, { latest, maSessions: 20 })))
+    assert.match(nodeText(tree.root), /历史分位数据不足/)
+  } finally { if (tree) await act(async () => tree.unmount()) }
+})
+
+test('next ratio signal keeps pending target distinct from saved holdings and supports old results', async () => {
+  const result = { current_state: 'GROWTH', next_signal: {
+    signal_date: '2026-11-12', execution_date: '2026-11-13', target_state: 'GROWTH', actual_state: 'DIVIDEND',
+    action: 'SWITCH', target_etf: '159915.SZ', execution_basis: 'NEXT_OPEN', deviation: .02, buffer_fraction: .015,
+  } }
+  let tree
+  try {
+    await act(async () => { tree = renderer.create(React.createElement(RatioNextSignal, { result })) })
+    assert.match(text(tree), /下一交易日信号/)
+    assert.match(text(tree), /2026-11-13/)
+    assert.match(nodeText(tree.root), /回测实际持仓：红利低波/)
+    assert.match(text(tree), /待切换/)
+    await act(async () => tree.update(React.createElement(RatioNextSignal, { result: { ...result,
+      next_signal: { ...result.next_signal, signal_date: '2026-12-31', action: 'HOLD', actual_state: 'GROWTH', execution_date: null } } })))
+    assert.match(text(tree), /继续持有，无需切换/)
+    assert.match(text(tree), /待交易日历更新/)
+    const legacy = { current_state: 'DIVIDEND', parameters: { data_mode: 'ETF', buffer_fraction: .015 },
+      latest: { session: '2026-09-30', state: 'DIVIDEND', deviation: -.01 } }
+    await act(async () => tree.update(React.createElement(RatioNextSignal, { result: legacy,
+      accountDay: { session: '2026-09-30', holdings: [{ ts_code: '563020.SH', quantity: 100 }] } })))
+    assert.match(text(tree), /2026-10-08/)
+    assert.match(text(tree), /继续持有，无需切换/)
+    assert.match(text(tree), /处于缓冲带内/)
+  } finally {
+    if (tree) await act(async () => tree.unmount())
+  }
+})
 
 beforeEach(() => invalidateQualityReads())
 
@@ -82,6 +137,9 @@ test('ratio rotation saves its own parameters and submits the selected historica
     await act(async () => { tree = renderer.create(React.createElement(QualityStrategies)); await Promise.resolve() })
     assert.equal(tree.root.findByProps({ 'aria-label': '比值均线周期' }).props.value, 20)
     assert.equal(tree.root.findByProps({ 'aria-label': '比值缓冲带' }).props.value, 1.5)
+    assert.equal(tree.root.findByProps({ 'aria-label': '比值单边手续费' }).props.value, 2)
+    assert.equal(tree.root.findByProps({ 'aria-label': '比值单边滑点' }).props.value, 2)
+    assert.match(text(tree), /历史结果费用：单边万十/)
     assert.ok(tree.root.findByProps({ 'aria-label': '最新明细' }))
     assert.ok(tree.root.findByProps({ 'aria-label': '创业板全收益指数（代理）对照曲线' }))
     assert.equal(tree.root.findAllByProps({ 'aria-label': '风格轮动参数' }).length, 0)
@@ -94,13 +152,20 @@ test('ratio rotation saves its own parameters and submits the selected historica
     assert.equal(posts.length, 0)
     const draft = JSON.parse(storage.get('alpha-research.quality-ranges'))[candidate.strategy_id]
     assert.equal(draft.ratio_parameters.ma_sessions, 30)
+    await act(async () => tree.root.findByProps({ 'aria-label': '比值单边手续费' }).props.onChange({ target: { value: '1.5' } }))
+    await act(async () => tree.root.findByProps({ 'aria-label': '比值单边滑点' }).props.onChange({ target: { value: '0' } }))
     await act(async () => tree.root.findByProps({ 'aria-label': '比值回测数据口径' }).props.onChange({ target: { value: 'ETF' } }))
     assert.equal(tree.root.findByProps({ 'aria-label': '回测开始日' }).props.value, '2024-01-02')
+    assert.equal(tree.root.findByProps({ 'aria-label': '比值最低佣金' }).props.value, 5)
+    await act(async () => tree.root.findByProps({ 'aria-label': '比值最低佣金' }).props.onChange({ target: { value: '0' } }))
     await act(async () => tree.root.findAllByType('button').find(node => nodeText(node) === '2016至数据最新日').props.onClick())
     assert.equal(tree.root.findByProps({ 'aria-label': '比值回测数据口径' }).props.value, 'INDEX_PROXY')
     await act(async () => { button(tree.root, '回测／更新').props.onClick(); await Promise.resolve() })
     assert.equal(posts[0].start, '2016-01-01')
-    assert.deepEqual(posts[0].ratio_parameters, { ...settings, ma_sessions: 30 })
+    assert.deepEqual(posts[0].ratio_parameters, { ...settings, ma_sessions: 30, commission_bps: 1.5, slippage_bps: 0, minimum_commission: 0 })
+    const savedCosts = JSON.parse(storage.get('alpha-research.quality-ranges'))[candidate.strategy_id].ratio_parameters
+    assert.equal(savedCosts.commission_bps, 1.5)
+    assert.equal(savedCosts.slippage_bps, 0)
     assert.ok(!('rotation_parameters' in posts[0]))
     assert.deepEqual(posts[0].current_holdings, [])
   } finally {
@@ -1313,7 +1378,34 @@ test('switching keeps the panel mounted and stale same-strategy responses cannot
   await act(async () => tree.unmount())
 })
 
-test('refresh restores category and strategy, with a safe fallback for a deleted saved strategy', async () => {
+test('each entry opens the preferred ratio strategy first while manual switching still works', async () => {
+  const originalWindow = globalThis.window
+  const storage = new Map([['alpha-research.quality-selection', JSON.stringify({ category: 'BANK', strategy_id: 'candidate-1' })]])
+  const ratio = { ...items[0], strategy_id: 'chinext-dividend-lowvol-ratio', category: 'STYLE_ROTATION',
+    strategy_kind: 'CHINEXT_DIVIDEND_RATIO', name: '创业板红利低波 · 比值轮动',
+    ratio_defaults: { data_mode: 'ETF', ma_sessions: 20, buffer_fraction: .015 } }
+  const other = { ...items[0], strategy_id: 'other-style', category: 'STYLE_ROTATION', name: '另一套风格轮动' }
+  const candidates = [other, ...items, ratio]
+  globalThis.window = { ...originalWindow, localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) } }
+  globalThis.fetch = async url => ({ ok: true, json: async () => String(url).split('?')[0].endsWith('/quality-strategies')
+    ? { categories: [{ id: 'BANK', name: '银行' }, { id: 'STYLE_ROTATION', name: '风格轮动' }], items: candidates }
+    : detail(candidates.find(item => String(url).split('?')[0].endsWith(item.strategy_id))) })
+  let tree
+  try {
+    await preloadQualityStrategies()
+    await act(async () => { tree = renderer.create(React.createElement(QualityStrategies)); await Promise.resolve() })
+    const cards = () => tree.root.findAll(node => node.type === 'button' && node.props.className?.split(' ').includes('qs-candidate'))
+    assert.match(nodeText(cards()[0]), /创业板红利低波/)
+    assert.match(nodeText(tree.root.findByProps({ className: 'qs-candidate selected' })), /创业板红利低波/)
+    await act(async () => cards()[1].props.onClick())
+    assert.match(nodeText(tree.root.findByProps({ className: 'qs-candidate selected' })), /另一套风格轮动/)
+    await act(async () => tree.unmount())
+    await act(async () => { tree = renderer.create(React.createElement(QualityStrategies)); await Promise.resolve() })
+    assert.match(nodeText(tree.root.findByProps({ className: 'qs-candidate selected' })), /创业板红利低波/)
+  } finally { if (tree) await act(async () => tree.unmount()); globalThis.window = originalWindow }
+})
+
+test('refresh restores category and strategy when the preferred ratio strategy is unavailable', async () => {
   const originalWindow = globalThis.window
   const storage = new Map([['alpha-research.quality-selection', JSON.stringify({ category: 'BANK', strategy_id: 'candidate-1' })]])
   globalThis.window = { ...originalWindow, localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) } }

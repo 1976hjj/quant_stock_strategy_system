@@ -1,8 +1,20 @@
 import { STRATEGY_API_ROOT } from './strategyApi'
 
 export const QUALITY_SELECTION_KEY = 'alpha-research.quality-selection'
+export const PREFERRED_QUALITY_STRATEGY = 'chinext-dividend-lowvol-ratio'
 type Selection = { category: string; strategy_id?: string }
 type Entry = { value?: unknown; expires: number; pending?: Promise<unknown> }
+
+export function orderedQualityStrategies<T extends { strategy_id: string }>(items: T[]): T[] {
+  return [...items.filter(item => item.strategy_id === PREFERRED_QUALITY_STRATEGY),
+    ...items.filter(item => item.strategy_id !== PREFERRED_QUALITY_STRATEGY)]
+}
+
+export function initialQualityStrategy<T extends { strategy_id: string; category: string }>(items: T[], selection: Selection): T | undefined {
+  return items.find(item => item.strategy_id === PREFERRED_QUALITY_STRATEGY)
+    || items.find(item => item.strategy_id === selection.strategy_id && item.category === selection.category)
+    || items.find(item => item.category === selection.category) || items[0]
+}
 const entries = new Map<string, Entry>()
 const TTL = 30_000
 const MAX_ENTRIES = 4 // List plus at most three full accounts in this tab's memory.
@@ -10,7 +22,7 @@ const MAX_ENTRIES = 4 // List plus at most three full accounts in this tab's mem
 export function savedQualitySelection(): Selection {
   try {
     const value = JSON.parse(window.localStorage.getItem(QUALITY_SELECTION_KEY) || 'null')
-    if (value && ['SMALL_CAP', 'BANK', 'FACTOR_WEIGHTED'].includes(value.category)) {
+    if (value && ['SMALL_CAP', 'BANK', 'FACTOR_WEIGHTED', 'STYLE_ROTATION'].includes(value.category)) {
       return { category: value.category, strategy_id: typeof value.strategy_id === 'string' ? value.strategy_id : undefined }
     }
   } catch { /* Storage can be unavailable. */ }
@@ -53,8 +65,7 @@ export async function preloadQualityStrategies(): Promise<void> {
     : Promise.resolve(undefined)
   try {
     const data = await list
-    const first = data.items.find(item => item.strategy_id === selection.strategy_id && item.category === selection.category)
-      || data.items.find(item => item.category === selection.category) || data.items[0]
+    const first = initialQualityStrategy(data.items, selection)
     if (first && first.strategy_id !== selection.strategy_id) await readQuality(`quality-strategies/${encodeURIComponent(first.strategy_id)}`)
     await remembered
   } catch { /* Background reads cannot block the current page; visible reads retry. */ }
