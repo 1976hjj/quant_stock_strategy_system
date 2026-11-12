@@ -84,7 +84,7 @@ export default function DataManager() {
     if (initial) {
       const source = data.sources?.find((item) => item.id === 'tushare')
       const defaults = source?.defaults || data.defaults
-      setSelectedGroups(defaults.groups)
+      setSelectedGroups(defaults.groups.filter(group => group !== 'financial'))
       setTarget(data.latest_complete_day)
       setIndustryTarget(data.latest_complete_day)
     }
