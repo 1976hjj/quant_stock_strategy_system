@@ -61,6 +61,155 @@ test('next ratio signal keeps pending target distinct from saved holdings and su
 
 beforeEach(() => invalidateQualityReads())
 
+test('holding identity leads with Chinese name and retains code and date-matched industry', async () => {
+  const position = { ts_code: '601998.SH', security_name: '中信银行', name_is_point_in_time: false,
+    industry_name: '银行 / 股份制银行Ⅱ', quantity: 100, market_value_cny: 1000 }
+  const daily = [{ session: '2026-11-12', nav: 1100, holdings: [position] },
+    { session: '2026-11-13', nav: 1100, holdings: [position] }]
+  let tree
+  try {
+    await act(async () => { tree = renderer.create(React.createElement(Curve, { daily })) })
+    const chart = tree.root.findByProps({ className: 'qs-curve' })
+    await act(async () => chart.props.onKeyDown({ key: 'Home', preventDefault() {} }))
+    const cell = () => tree.root.findByType('tbody').findAllByType('td')[0]
+    assert.equal(cell().findAllByType('b')[0].children[0], '中信银行')
+    assert.equal(cell().findAllByType('small')[0].children[0], '601998.SH')
+    assert.match(nodeText(cell()), /银行 \/ 股份制银行Ⅱ/)
+    assert.match(cell().findAllByType('b')[0].props.title, /仅作展示/)
+    const missing = daily.map(d => ({ ...d, holdings: [{ ...position, security_name: '601998.SH' }] }))
+    await act(async () => tree.update(React.createElement(Curve, { daily: missing })))
+    assert.equal(cell().findAllByType('b')[0].children[0], '名称未记录')
+    assert.equal(cell().findAllByType('small')[0].children[0], '601998.SH')
+  } finally { if (tree) await act(async () => tree.unmount()) }
+})
+
+test('mixed and pure-stock rotation colors use executed leg metadata and preserve the selected pair in tomorrow plan', async () => {
+  const daily = [
+    { session: '2026-11-10', nav: 100, holdings: [{ ts_code: '300750.SZ', quantity: 100, rotation_style: 'GROWTH' }] },
+    { session: '2026-11-11', nav: 101, holdings: [{ ts_code: '300750.SZ', quantity: 100, rotation_style: 'GROWTH' }] },
+    { session: '2026-11-12', nav: 102, holdings: [{ ts_code: '601998.SH', quantity: 100, rotation_style: 'DIVIDEND' }, { ts_code: '512890.SH', quantity: 100 }] },
+  ]
+  const result = { parameters: { data_mode: 'ETF_STOCK', stock_weight: .25 },
+    latest: { session: '2026-11-12', state: 'DIVIDEND' }, next_signal: {
+      signal_date: '2026-11-12', execution_date: null, target_state: 'DIVIDEND', actual_state: 'DIVIDEND', action: 'HOLD',
+      target_etf: '512890.SH', target_stock: '601998.SH', stock_target_weight: .25,
+      selection_signal_date: '2026-09-28', execution_basis: 'NEXT_OPEN', deviation: -.02, buffer_fraction: .015,
+    } }
+  let tree
+  try {
+    await act(async () => { tree = renderer.create(React.createElement(Curve, { daily, colorByStyle: true })) })
+    assert.deepEqual(tree.root.findAllByProps({ className: 'qs-style-nav-line' }).map(n => n.props['data-holding-style']), ['GROWTH', 'DIVIDEND'])
+    await act(async () => tree.update(React.createElement(RatioNextSignal, { result, accountDay: daily.at(-1) })))
+    assert.match(text(tree), /继续持有，无需切换/)
+    assert.match(text(tree), /601998.SH/)
+    assert.match(text(tree), /25.00%/)
+    assert.match(text(tree), /2026-09-28/)
+    assert.doesNotMatch(text(tree), /共同持仓/)
+  } finally { if (tree) await act(async () => tree.unmount()) }
+})
+
+test('ETF plus one stock mode adjusts the start date, submits and restores the stock fraction without relabeling the old result', async () => {
+  const originalWindow = globalThis.window; const storage = new Map(); const posts = []; let tree
+  const candidate = { ...items[0], strategy_id: 'chinext-dividend-lowvol-ratio', category: 'STYLE_ROTATION',
+    strategy_kind: 'CHINEXT_DIVIDEND_RATIO', ratio_stock_data_start: '2019-08-30', ratio_stock_data_end: '2026-11-13',
+    ratio_data_end: '2026-11-13', start: '2016-01-01', backtest_min_start: '2016-01-01' }
+  const saved = { ...detail(candidate), signal: null }
+  globalThis.window = { ...originalWindow, localStorage: { getItem: k => storage.get(k) || null, setItem: (k,v) => storage.set(k,v) } }
+  globalThis.fetch = async (url, options) => {
+    if (options?.method === 'POST') { posts.push(JSON.parse(options.body)); return { ok: true, json: async () => ({ job_id: 'mixed-test', status: 'RUNNING' }) } }
+    return { ok: true, json: async () => String(url).split('?')[0].endsWith('/quality-strategies')
+      ? { categories: [{ id: 'STYLE_ROTATION', name: '风格轮动' }], items: [candidate] } : saved }
+  }
+  try {
+    await act(async () => { tree = renderer.create(React.createElement(QualityStrategies)); await Promise.resolve() })
+    assert.equal(tree.root.findByProps({ 'aria-label': '比值回测数据口径' }).props.value, 'INDEX_PROXY')
+    await act(async () => tree.root.findByProps({ 'aria-label': '比值回测数据口径' }).props.onChange({ target: { value: 'ETF_STOCK' } }))
+    assert.equal(tree.root.findByProps({ 'aria-label': '回测开始日' }).props.value, '2019-08-30')
+    assert.equal(tree.root.findByProps({ 'aria-label': '单股目标比例' }).props.value, 25)
+    assert.match(text(tree), /159915/); assert.match(text(tree), /512890/)
+    await act(async () => tree.root.findByProps({ 'aria-label': '单股目标比例' }).props.onChange({ target: { value: '100' } }))
+    assert.equal(posts.length, 0)
+    await act(async () => { button(tree.root, '回测／更新').props.onClick(); await Promise.resolve() })
+    assert.equal(posts[0].ratio_parameters.data_mode, 'ETF_STOCK')
+    assert.equal(posts[0].ratio_parameters.stock_weight, 1)
+    assert.equal(posts[0].ratio_parameters.execution_model, 'SAME_CLOSE_FIXED')
+    assert.equal(posts[0].ratio_parameters.etf_slippage_cny, .002)
+    assert.equal(posts[0].ratio_parameters.stock_slippage_cny, .02)
+    assert.equal(posts[0].start, '2019-08-30')
+    assert.deepEqual(posts[0].current_holdings, [])
+    await act(async () => tree.unmount()); tree = null
+    invalidateQualityReads()
+    await act(async () => { tree = renderer.create(React.createElement(QualityStrategies)); await Promise.resolve() })
+    assert.equal(tree.root.findByProps({ 'aria-label': '单股目标比例' }).props.value, 100)
+    assert.equal(tree.root.findByProps({ 'aria-label': '比值回测数据口径' }).props.value, 'ETF_STOCK')
+  } finally {
+    if (tree) await act(async () => tree.unmount())
+    globalThis.window = originalWindow
+  }
+})
+
+test('fixed-yuan draft migrates old percentage slippage without relabeling history and persists independent prices', async () => {
+  const originalWindow = globalThis.window; const storage = new Map(); const posts = []; let tree
+  const settings = { data_mode: 'ETF_STOCK', stock_weight: .25, ma_sessions: 20, buffer_fraction: .015,
+    commission_bps: 2, slippage_bps: 100, minimum_commission: 5 }
+  const candidate = { ...items[0], strategy_id: 'chinext-dividend-lowvol-ratio', category: 'STYLE_ROTATION',
+    strategy_kind: 'CHINEXT_DIVIDEND_RATIO', start: '2024-01-02', ratio_stock_data_end: '2026-11-13' }
+  const saved = { ...detail(candidate), signal: {
+    calculation_mode: 'CHINEXT_DIVIDEND_RATIO_V1', ratio_parameters: settings, as_of: '2026-11-13', signal_date: '2026-11-13',
+    model_positions: [], targets: [], orders: [], warnings: [], input_bindings: [],
+    historical_replay: { summary: metrics, annual: [], daily: [] },
+    ratio_rotation: { parameters: settings, market_as_of: '2026-11-13', current_state: 'GROWTH', switches: [],
+      latest: { session: '2026-11-13', state: 'GROWTH', ratio: .3, moving_average: .29, deviation: .03 } },
+  } }
+  storage.set('alpha-research.quality-ranges', JSON.stringify({ [candidate.strategy_id]: { ratio_parameters: settings } }))
+  globalThis.window = { ...originalWindow, localStorage: { getItem: k => storage.get(k) || null, setItem: (k,v) => storage.set(k,v) } }
+  globalThis.fetch = async (url, options) => {
+    if (options?.method === 'POST') { posts.push(JSON.parse(options.body)); return { ok: true, json: async () => ({ job_id: 'fixed-test', status: 'RUNNING' }) } }
+    return { ok: true, json: async () => String(url).split('?')[0].endsWith('/quality-strategies')
+      ? { categories: [{ id: 'STYLE_ROTATION', name: '风格轮动' }], items: [candidate] } : saved }
+  }
+  try {
+    await act(async () => { tree = renderer.create(React.createElement(QualityStrategies)); await Promise.resolve() })
+    const input = label => tree.root.findByProps({ 'aria-label': label })
+    assert.equal(input('比值ETF单边价差').props.value, .002)
+    assert.equal(input('比值股票单边价差').props.value, .02)
+    assert.equal(tree.root.findAllByProps({ 'aria-label': '比值单边滑点' }).length, 0)
+    assert.match(text(tree), /历史比例滑点1.00%/)
+    assert.match(text(tree), /次日开盘成交/)
+    assert.match(text(tree), /参数已修改/)
+    await act(async () => input('比值ETF单边价差').props.onChange({ target: { value: '.004' } }))
+    assert.equal(input('比值股票单边价差').props.value, .02)
+    await act(async () => input('比值股票单边价差').props.onChange({ target: { value: '.03' } }))
+    await act(async () => { button(tree.root, '回测／更新').props.onClick(); await Promise.resolve() })
+    assert.equal(posts[0].ratio_parameters.etf_slippage_cny, .004)
+    assert.equal(posts[0].ratio_parameters.stock_slippage_cny, .03)
+    assert.equal(posts[0].ratio_parameters.execution_model, 'SAME_CLOSE_FIXED')
+    assert.equal(posts[0].ratio_parameters.slippage_bps, 100) // retained legacy field is not converted to yuan
+    await act(async () => tree.unmount()); tree = null
+    invalidateQualityReads()
+    await act(async () => { tree = renderer.create(React.createElement(QualityStrategies)); await Promise.resolve() })
+    assert.equal(input('比值ETF单边价差').props.value, .004)
+    assert.equal(input('比值股票单边价差').props.value, .03)
+    assert.match(text(tree), /历史比例滑点1.00%/)
+  } finally { if (tree) await act(async () => tree.unmount()); globalThis.window = originalWindow }
+})
+
+test('same-close result labels the saved closing target without instructing a next-open order', async () => {
+  let tree
+  const result = { parameters: { data_mode: 'ETF_STOCK', execution_model: 'SAME_CLOSE_FIXED' },
+    latest: { session: '2026-11-13', state: 'GROWTH', deviation: .03 }, next_signal: {
+      signal_date: '2026-11-13', execution_date: null, target_state: 'GROWTH', actual_state: 'GROWTH',
+      action: 'HOLD', target_etf: '159915.SZ', execution_basis: 'SAME_CLOSE_FIXED', deviation: .03, buffer_fraction: .015,
+    } }
+  try {
+    await act(async () => { tree = renderer.create(React.createElement(RatioNextSignal, { result })) })
+    assert.match(text(tree), /收盘目标与下一日参考/)
+    assert.match(text(tree), /盘中重新观察/)
+    assert.match(text(tree), /不是下一日提前确认的尾盘信号/)
+    assert.doesNotMatch(text(tree), /下一交易日开盘执行/)
+  } finally { if (tree) await act(async () => tree.unmount()) }
+})
+
 test('ratio curve colors follow executed holdings with connected mixed and cash segments', async () => {
   const holding = (code, value = 100) => ({ ts_code: code, quantity: 100, market_value_cny: value })
   const daily = [
@@ -138,7 +287,7 @@ test('ratio rotation saves its own parameters and submits the selected historica
     assert.equal(tree.root.findByProps({ 'aria-label': '比值均线周期' }).props.value, 20)
     assert.equal(tree.root.findByProps({ 'aria-label': '比值缓冲带' }).props.value, 1.5)
     assert.equal(tree.root.findByProps({ 'aria-label': '比值单边手续费' }).props.value, 2)
-    assert.equal(tree.root.findByProps({ 'aria-label': '比值单边滑点' }).props.value, 2)
+    assert.equal(tree.root.findAllByProps({ 'aria-label': '比值单边滑点' }).length, 0)
     assert.match(text(tree), /历史结果费用：单边万十/)
     assert.ok(tree.root.findByProps({ 'aria-label': '最新明细' }))
     assert.ok(tree.root.findByProps({ 'aria-label': '创业板全收益指数（代理）对照曲线' }))
@@ -153,8 +302,9 @@ test('ratio rotation saves its own parameters and submits the selected historica
     const draft = JSON.parse(storage.get('alpha-research.quality-ranges'))[candidate.strategy_id]
     assert.equal(draft.ratio_parameters.ma_sessions, 30)
     await act(async () => tree.root.findByProps({ 'aria-label': '比值单边手续费' }).props.onChange({ target: { value: '1.5' } }))
-    await act(async () => tree.root.findByProps({ 'aria-label': '比值单边滑点' }).props.onChange({ target: { value: '0' } }))
     await act(async () => tree.root.findByProps({ 'aria-label': '比值回测数据口径' }).props.onChange({ target: { value: 'ETF' } }))
+    assert.equal(tree.root.findByProps({ 'aria-label': '比值ETF单边价差' }).props.value, .002)
+    await act(async () => tree.root.findByProps({ 'aria-label': '比值ETF单边价差' }).props.onChange({ target: { value: '0' } }))
     assert.equal(tree.root.findByProps({ 'aria-label': '回测开始日' }).props.value, '2024-01-02')
     assert.equal(tree.root.findByProps({ 'aria-label': '比值最低佣金' }).props.value, 5)
     await act(async () => tree.root.findByProps({ 'aria-label': '比值最低佣金' }).props.onChange({ target: { value: '0' } }))
@@ -162,10 +312,11 @@ test('ratio rotation saves its own parameters and submits the selected historica
     assert.equal(tree.root.findByProps({ 'aria-label': '比值回测数据口径' }).props.value, 'INDEX_PROXY')
     await act(async () => { button(tree.root, '回测／更新').props.onClick(); await Promise.resolve() })
     assert.equal(posts[0].start, '2016-01-01')
-    assert.deepEqual(posts[0].ratio_parameters, { ...settings, ma_sessions: 30, commission_bps: 1.5, slippage_bps: 0, minimum_commission: 0 })
+    assert.deepEqual(posts[0].ratio_parameters, { ...settings, ma_sessions: 30, commission_bps: 1.5, slippage_bps: 2, minimum_commission: 0, stock_weight: .25,
+      execution_model: 'SAME_CLOSE_FIXED', etf_slippage_cny: 0, stock_slippage_cny: .02 })
     const savedCosts = JSON.parse(storage.get('alpha-research.quality-ranges'))[candidate.strategy_id].ratio_parameters
     assert.equal(savedCosts.commission_bps, 1.5)
-    assert.equal(savedCosts.slippage_bps, 0)
+    assert.equal(savedCosts.etf_slippage_cny, 0)
     assert.ok(!('rotation_parameters' in posts[0]))
     assert.deepEqual(posts[0].current_holdings, [])
   } finally {
@@ -1118,7 +1269,7 @@ test('crosshair preserves continuing holding slots across prices, substitutions 
     await act(async () => { tree = renderer.create(React.createElement(Curve, { daily })) })
     const svg = tree.root.findByProps({className:'qs-curve'})
     const key = async key => act(async () => svg.props.onKeyDown({ key, preventDefault() {} }))
-    const order = () => tree.root.findByType('tbody').findAllByType('tr').map(row => row.findAllByType('b')[0]?.children[0] ?? null)
+    const order = () => tree.root.findByType('tbody').findAllByType('tr').map(row => row.findAllByType('td')[0].findAllByType('small')[0]?.children[0] ?? null)
     await key('Home')
     assert.deepEqual(order(), ['A', 'B', 'C'])
     await key('ArrowRight')

@@ -1,4 +1,4 @@
-const DATA_API_ROOT = (import.meta.env.VITE_DATA_API_URL || 'http://127.0.0.1:8774/api/v1').replace(/\/$/, '')
+export const DATA_API_ROOT = (import.meta.env.VITE_DATA_API_URL || 'http://127.0.0.1:8774/api/v1').replace(/\/$/, '')
 
 export interface DataGroup {
   source_id?: 'tushare' | 'eastmoney' | 'industry'
@@ -11,7 +11,9 @@ export interface DataGroup {
   start: string | null
   end: string | null
   partitions: Record<string, number>
-  datasets: Array<{ id: string; start: string | null; end: string | null; partitions: number; rows?: number }>
+  datasets: Array<{ id: string; name?: string; ts_code?: string; category?: 'BROAD' | 'GROWTH' | 'DIVIDEND';
+    pricing?: string; publication_date?: string | null; history_note?: string | null; source_note?: string | null; error?: string | null;
+    start: string | null; end: string | null; partitions: number; rows?: number }>
   published: boolean
   last_collected_at?: string | null
   source_label?: string

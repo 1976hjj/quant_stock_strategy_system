@@ -18,15 +18,18 @@ const rotationDatasetNames: Record<string, string> = {
 
 const groupDescriptions: Record<string, string> = {
   market: '股票与ETF行情、估值、复权及分红校验。',
-  benchmark: '宽基、成长与红利低波指数，含价格及全收益口径。',
+  benchmark: '宽基、成长、红利、低波与红利质量指数；价格和全收益口径分别归档。',
 }
 
-function DataCoverageGroups({ group }: { group: DataGroup }) {
+export function DataCoverageGroups({ group }: { group: DataGroup }) {
+  const categoryIds = (category: string, original: string[] = []) => [
+    ...original, ...group.datasets.filter(d => d.category === category).map(d => d.id),
+  ]
   const definitions = group.id === 'benchmark'
     ? [
-      { name: '宽基指数', ids: ['csi300_daily'] },
-      { name: '创业板指数', ids: ['399006.SZ', '399606.SZ'] },
-      { name: '红利低波指数', ids: ['H30269.CSI', 'H20269.CSI'] },
+      { name: '宽基指数', ids: categoryIds('BROAD', ['csi300_daily']) },
+      { name: '成长指数', ids: categoryIds('GROWTH', ['399006.SZ', '399606.SZ']) },
+      { name: '红利与质量指数', ids: categoryIds('DIVIDEND', ['H30269.CSI', 'H20269.CSI']) },
     ]
     : [
       { name: '股票行情与估值', ids: ['daily', 'adj_factor', 'daily_basic'] },
@@ -38,7 +41,9 @@ function DataCoverageGroups({ group }: { group: DataGroup }) {
   const categories = [...definitions, { name: '其他数据', ids: group.datasets.filter(item => !known.has(item.id)).map(item => item.id) }]
     .map(category => ({ ...category, items: group.datasets.filter(item => category.ids.includes(item.id)) }))
     .filter(category => category.items.length)
-  return <details className="data-datasets data-datasets-grouped">
+  const latestEnd = group.datasets.map(d => d.end).filter((d): d is string => !!d).sort().at(-1)
+  const latestCount = latestEnd ? group.datasets.filter(d => d.end === latestEnd).length : 0
+  return <>{group.id === 'benchmark' && latestEnd && <small>{latestCount}/{group.datasets.length}项截至{latestEnd}；汇总日期取各项最早截止。</small>}<details className="data-datasets data-datasets-grouped">
     <summary>查看分类数据日期</summary>
     <div>{categories.map(category => {
       const ends = category.items.map(item => item.end)
@@ -46,12 +51,15 @@ function DataCoverageGroups({ group }: { group: DataGroup }) {
       return <details className="data-coverage-category" key={category.name}>
         <summary><b>{category.name}</b><small>{category.items.length}项 · 截至{end || '尚无完整记录'}</small></summary>
         <div>{category.items.map(item => <div className="data-coverage-row" key={item.id}>
-          <b>{rotationDatasetNames[item.id] || item.id}</b>
+          <b>{item.name ? `${item.name}价格指数 · ${(item.ts_code || item.id).split('.')[0]}` : rotationDatasetNames[item.id] || item.id}</b>
           <small>{dateLabel(item.start)} → {dateLabel(item.end)}</small>
+          {item.history_note && <small>发布日 {item.publication_date} · {item.history_note}</small>}
+          {item.source_note && <small>{item.source_note}</small>}
+          {item.error && <small className="error">最近更新未完成：{item.error}</small>}
         </div>)}</div>
       </details>
     })}</div>
-  </details>
+  </details></>
 }
 
 export default function DataManager() {
