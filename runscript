@@ -1,0 +1,5 @@
+Get-NetTCPConnection -State Listen -LocalPort 8872,8771,8773,8774 -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty OwningProcess -Unique |
+    ForEach-Object { Stop-Process -Id $_ -Force }
+
+powershell -ExecutionPolicy Bypass -File "D:\futures_quant_strategy\run.ps1"

@@ -1,6 +1,7 @@
 import './style-rotation.css'
 import { nextPublishedTradingSession } from './tradingCalendar2026'
 import { RatioHistoryPosition } from './RatioHistoryPosition'
+import { RatioTriggerReference } from './RatioTriggerReference'
 
 export type RatioParameters = {
   data_mode: 'INDEX_PROXY' | 'ETF' | 'ETF_STOCK'
@@ -78,7 +79,7 @@ const pct = (value: number) => `${(value * 100).toFixed(2)}%`
 
 type AccountDay = { session: string; pending_execution?: boolean; holdings?: Array<{ rotation_style?: string; ts_code: string; quantity?: number; market_value_cny?: number }> }
 
-export function RatioNextSignal({ result, accountDay }: { result: RatioResult; accountDay?: AccountDay }) {
+export function RatioNextSignal({ result, accountDay, strategyId }: { result: RatioResult; accountDay?: AccountDay; strategyId?: string }) {
   const latest = result.latest
   const holdings = accountDay && latest && accountDay.session === latest.session ? accountDay.holdings : undefined
   const styles = new Set(holdings?.filter(h => (h.quantity || h.market_value_cny || 0) > 0).map(h =>
@@ -108,6 +109,7 @@ export function RatioNextSignal({ result, accountDay }: { result: RatioResult; a
     <p>回测实际持仓：{actual}。比值距均线 {pct(plan.deviation)}，缓冲带 ±{pct(plan.buffer_fraction)}。{inBand ? '处于缓冲带内，沿用此前信号。' : plan.deviation > 0 ? '比值高于上缓冲，目标为创业板。' : '比值低于下缓冲，目标为红利低波。'}</p>
     {plan.action === 'SWITCH' && <p>计划由{actual}转向{stateName(plan.target_state)}，先卖出原持仓，再买入目标{result.parameters?.data_mode === 'ETF_STOCK' ? 'ETF与单股组合' : 'ETF'}。</p>}
     {plan.action === 'COMPLETE_SWITCH' && <p>账户仍有待完成的调仓，成交前按现有实际持仓记录。</p>}
+    <RatioTriggerReference strategyId={strategyId} result={result} />
     {result.parameters?.data_mode === 'ETF_STOCK' && <small>{plan.target_stock ? `该股票选于${plan.selection_signal_date || '最近切换日'}，持有期间不重新排名或恢复固定比例。` : '本次没有单股目标。'}0%为纯ETF，100%为纯单股。</small>}
     <small>{closeModel ? '本次按当日最终收盘信号、同日收盘价加减固定价差模拟；上方为已结束交易日的账户与目标，不是下一日提前确认的尾盘信号。尾盘交易前需重新观察当时比值与选股排名，最终收盘前仍可能变化。' : '计划基于本次回测截至日，使用本次保存的参数。实际证券按下一交易日开盘执行，成交以委托结果为准。'}</small>
   </section>

@@ -5,6 +5,45 @@ import renderer from 'react-test-renderer'
 import QualityStrategies, { CalculationStatus, Curve, TakeProfitResults, QualityTradePlan, preloadQualityStrategies, readQuality, invalidateQualityReads } from '../.quality-test-build/QualityStrategies.js'
 import { RatioNextSignal } from '../.quality-test-build/QualityStrategies.js'
 import { RatioHistoryPosition } from '../.quality-test-build/QualityStrategies.js'
+import { RatioTriggerPanel, ratioTriggerEstimate, ratioTriggerRanges } from '../.quality-test-build/QualityStrategies.js'
+
+const triggerFixture = {
+  status: 'AVAILABLE', as_of: '2026-11-13', quote_basis: 'ARCHIVED_CLOSE', signal_state: 'DIVIDEND',
+  ma_sessions: 20, buffer_fraction: .015, growth_etf: '159915.SZ', dividend_etf: '512890.SH',
+  growth_close: 2.442, dividend_close: 1.245,
+  growth_upper_per_dividend: 2.1162521189460066, growth_lower_per_dividend: 2.050462664607127,
+  volatility: { sessions: 60, median_abs_log_move: .015, p90_abs_log_move: .04 },
+  assumption: 'ETF近似映射；以原指数收盘信号为准。',
+}
+
+test('ETF trigger reference distinguishes far, near, crossed and expired without claiming a probability', async () => {
+  const r = triggerFixture
+  assert.equal(ratioTriggerEstimate(r, 2.442, 1.245, '2026-11-16').level, 'DISTANT')
+  assert.equal(ratioTriggerEstimate(r, 2.55, 1.245, '2026-11-16').level, 'WATCH')
+  assert.equal(ratioTriggerEstimate(r, 2.62, 1.245, '2026-11-16').level, 'NEAR')
+  assert.equal(ratioTriggerEstimate(r, 2.635, 1.245, '2026-11-16').level, 'CROSSED')
+  assert.equal(ratioTriggerEstimate(r, 2.635, 1.245, '2026-11-17').level, 'STALE')
+  assert.equal(ratioTriggerEstimate(r, 0, 1.245, '2026-11-16'), null)
+  assert.equal(ratioTriggerEstimate({ ...r, signal_state: 'GROWTH' }, 2.442, 1.245, '2026-11-16').direction, 'DOWN')
+  const row = ratioTriggerRanges(r, 1.245).find(row => row.selected)
+  assert.deepEqual([row.low, row.high, row.up, row.down], [1.24, 1.25, 2.646, 2.542])
+  let tree
+  try {
+    await act(async () => { tree = renderer.create(React.createElement(RatioTriggerPanel, { reference: r, today: '2026-11-16' })) })
+    assert.match(nodeText(tree.root), /归档收盘价/)
+    assert.match(nodeText(tree.root), /2.635/)
+    assert.match(nodeText(tree.root), /不是切换概率/)
+    assert.match(nodeText(tree.root), /距离切换较远/)
+    await act(async () => tree.root.findByProps({ 'aria-label': '切换参考创业板ETF价格' }).props.onChange({ target: { value: '2.620' } }))
+    assert.match(nodeText(tree.root), /今日重点关注/)
+    assert.match(nodeText(tree.root), /手工情景价格，未接入实时行情/)
+    await act(async () => tree.root.findAllByType('button').find(b => nodeText(b) === '恢复收盘价').props.onClick())
+    assert.equal(tree.root.findByProps({ 'aria-label': '切换参考创业板ETF价格' }).props.value, '2.442')
+    await act(async () => tree.update(React.createElement(RatioTriggerPanel, { reference: r, today: '2026-11-17' })))
+    assert.match(nodeText(tree.root), /参考已过期/)
+    assert.doesNotMatch(nodeText(tree.root), /今日重点关注/)
+  } finally { if (tree) await act(async () => tree.unmount()) }
+})
 
 test('ratio history distribution uses its account window, interpolates quantiles and handles flat or missing history', async () => {
   const observations = [1, 2, 4, 5, 3].map((ratio, i) => ({ session: `2026-01-${String(i + 5).padStart(2, '0')}`, ratio }))
