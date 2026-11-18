@@ -15,7 +15,7 @@ function quantile(values: number[], probability: number) {
   return values[lower] + (values[upper] - values[lower]) * (position - lower)
 }
 
-function percentile(values: number[], value: number) {
+export function ratioPercentile(values: number[], value: number) {
   if (value < values[0]) return 0
   if (value > values[values.length - 1]) return 100
   if (values[0] === values[values.length - 1]) return 50
@@ -34,8 +34,8 @@ export function RatioHistoryPosition({ observations, latest, maSessions }: Props
   if (values.length < 2 || history.at(-1)?.session !== latest.session) {
     return <div className="qs-ratio-history"><b>当前比值 {latest.ratio.toFixed(4)} · 均线 {latest.moving_average.toFixed(4)}</b><p>历史分位数据不足，重新回测后显示分位图。</p></div>
   }
-  const currentPercentile = percentile(values, latest.ratio)
-  const meanPercentile = percentile(values, latest.moving_average)
+  const currentPercentile = ratioPercentile(values, latest.ratio)
+  const meanPercentile = ratioPercentile(values, latest.moving_average)
   const minimum = history.find(row => row.ratio === values[0])!
   const maximum = history.find(row => row.ratio === values[values.length - 1])!
   const positionLabel = currentPercentile <= 25 ? '较低分位' : currentPercentile >= 75 ? '较高分位' : '中间分位'

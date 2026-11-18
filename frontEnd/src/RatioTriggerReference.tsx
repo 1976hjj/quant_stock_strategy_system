@@ -5,6 +5,7 @@ import type { RatioResult } from './RatioRotationControls'
 
 export type TriggerReference = {
   status: 'AVAILABLE'; as_of: string; quote_basis: 'ARCHIVED_CLOSE'
+  signal_basis?: 'INDEX_PRICE' | 'ETF_PRICE' | 'STAR_ETF_PRICE'
   signal_state: 'CASH' | 'GROWTH' | 'DIVIDEND'; ma_sessions: number; buffer_fraction: number
   growth_etf: string; dividend_etf: string; growth_close: number; dividend_close: number
   growth_upper_per_dividend: number; growth_lower_per_dividend: number
@@ -50,6 +51,7 @@ export function ratioTriggerRanges(r: TriggerReference, dividend: number) {
 }
 
 export function RatioTriggerPanel({ reference: r, today = shanghaiDay() }: { reference: TriggerReference; today?: string }) {
+  const growthName = r.growth_etf === '588000.SH' ? '科创50' : '创业板'
   const [growth, setGrowth] = useState(price(r.growth_close))
   const [dividend, setDividend] = useState(price(r.dividend_close))
   const g = Number(growth), d = Number(dividend)
@@ -57,7 +59,7 @@ export function RatioTriggerPanel({ reference: r, today = shanghaiDay() }: { ref
   const manual = g !== r.growth_close || d !== r.dividend_close
   const forToday = estimate?.validFor === today
   const labels: Record<string, string> = {
-    STALE: '参考已过期，请更新数据', CROSSED: '输入价格已越线 · 待指数确认',
+    STALE: '参考已过期，请更新数据', CROSSED: r.signal_basis === 'ETF_PRICE' || r.signal_basis === 'STAR_ETF_PRICE' ? '输入价格已越线 · 待ETF收盘确认' : '输入价格已越线 · 待指数确认',
     NEAR: `${forToday ? '今日' : '下次交易'}重点关注 · 接近门槛`,
     WATCH: `${forToday ? '今日' : '下次交易'}留意 · 在近期日波动范围内`,
     DISTANT: '距离切换较远', UNKNOWN: '历史样本不足，仅展示距离',
@@ -70,22 +72,22 @@ export function RatioTriggerPanel({ reference: r, today = shanghaiDay() }: { ref
     <div className="qs-trigger-layout">
       <div>
         <div className="qs-trigger-prices">
-          <label>创业板ETF · {r.growth_etf}<input aria-label="切换参考创业板ETF价格" type="number" min="0.001" step="0.001" value={growth} onChange={e => setGrowth(e.target.value)} /></label>
+          <label>{growthName}ETF · {r.growth_etf}<input aria-label={`切换参考${growthName}ETF价格`} type="number" min="0.001" step="0.001" value={growth} onChange={e => setGrowth(e.target.value)} /></label>
           <label>红利低波ETF · {r.dividend_etf}<input aria-label="切换参考红利ETF价格" type="number" min="0.001" step="0.001" value={dividend} onChange={e => setDividend(e.target.value)} /></label>
         </div>
         <div className="qs-trigger-source"><small>{manual ? '手工情景价格，未接入实时行情' : '当前为归档收盘价，可填入看盘价格'}</small><button type="button" onClick={() => { setGrowth(price(r.growth_close)); setDividend(price(r.dividend_close)) }}>恢复收盘价</button></div>
         {estimate ? <>
           <div className={`qs-trigger-target is-${estimate.direction.toLowerCase()}`}>
-            <small>{estimate.direction === 'UP' ? '转成长：红利保持输入价格时，创业板需达到' : '转红利：红利保持输入价格时，创业板需降至'}</small>
+            <small>{estimate.direction === 'UP' ? `转${growthName}：红利保持输入价格时，${growthName}需达到` : `转红利：红利保持输入价格时，${growthName}需降至`}</small>
             <b>{price(estimate.target)} <em>元</em></b>
-            <span>{estimate.crossed ? '输入价格已越过ETF近似门槛，尚非确认交易信号。' : `较输入创业板价格还需${estimate.direction === 'UP' ? '上涨' : '下跌'}约${percent(Math.abs(estimate.targetReturn))}。`}</span>
+            <span>{estimate.crossed ? '输入价格已越过ETF近似门槛，尚非确认交易信号。' : `较输入${growthName}价格还需${estimate.direction === 'UP' ? '上涨' : '下跌'}约${percent(Math.abs(estimate.targetReturn))}。`}</span>
           </div>
           {r.volatility && <p className="qs-trigger-vol">近{r.volatility.sessions}个交易日，比值绝对日变动中位数约{percent(Math.expm1(r.volatility.median_abs_log_move))}，90%分位约{percent(Math.expm1(r.volatility.p90_abs_log_move))}。提醒比较的是所需变动与历史波幅，<strong>不是切换概率</strong>。</p>}
           {estimate.expired && <p className="qs-warning">这份门槛不适用于今天；请更新数据并完成回测后查看。</p>}
         </> : <p className="qs-warning">两只ETF价格均须大于0，不能用空值或0估计切换。</p>}
       </div>
       <div className="qs-trigger-table-wrap"><table className="qs-trigger-table">
-        <caption>红利价格区间 → 创业板参考价（元）</caption>
+        <caption>红利价格区间 → {growthName}参考价（元）</caption>
         <thead><tr><th>红利ETF区间</th><th className={estimate?.direction === 'UP' ? 'active-up' : ''}>转成长 ≥</th><th className={estimate?.direction === 'DOWN' ? 'active-down' : ''}>转红利 ≤</th></tr></thead>
         <tbody>{ratioTriggerRanges(r, d).map(row => <tr key={row.low} className={row.selected ? 'is-selected' : ''}><td>{price(row.low)}—{price(row.high)}</td><td>{price(row.up)}</td><td>{price(row.down)}</td></tr>)}</tbody>
       </table><small>上切按红利区间上沿、下切按下沿折算；上方大字按输入价格细算。这里只观察ETF，不指定个股。</small></div>
@@ -100,7 +102,8 @@ export function RatioTriggerReference({ strategyId, result }: { strategyId?: str
   const asOf = result.latest?.session
   const state = result.latest?.state || result.current_state
   const n = result.parameters?.ma_sessions, b = result.parameters?.buffer_fraction
-  const red = result.defensive_etf || (result.parameters?.data_mode === 'ETF_STOCK' ? '512890.SH' : '563020.SH')
+  const basis = result.parameters?.signal_basis ?? 'INDEX_PRICE'
+  const red = basis === 'ETF_PRICE' || basis === 'STAR_ETF_PRICE' ? '512890.SH' : result.defensive_etf || (result.parameters?.data_mode === 'ETF_STOCK' ? '512890.SH' : '563020.SH')
   useEffect(() => {
     setData(null); setError('')
     if (!strategyId || !asOf) return
@@ -111,14 +114,14 @@ export function RatioTriggerReference({ strategyId, result }: { strategyId?: str
         const response = await fetch(`${STRATEGY_API_ROOT}/quality-strategies/${encodeURIComponent(strategyId)}/ratio-trigger-reference`, { signal: controller.signal })
         const body = await response.json()
         if (!response.ok) throw new Error(body.detail || '切换参考暂时无法读取')
-        if (body.as_of !== asOf || body.ma_sessions !== n || body.buffer_fraction !== b || body.dividend_etf !== red || body.signal_state !== state) throw new Error('回测结果已更新，请刷新面板后查看切换参考')
+        if (body.as_of !== asOf || body.ma_sessions !== n || body.buffer_fraction !== b || body.dividend_etf !== red || body.signal_state !== state || (body.signal_basis ?? 'INDEX_PRICE') !== basis) throw new Error('回测结果已更新，请刷新面板后查看切换参考')
         if (active) setData(body)
       } catch (e) { if (active && !controller.signal.aborted) setError(String(e instanceof Error ? e.message : e)) }
     })()
     return () => { active = false; controller.abort() }
-  }, [strategyId, asOf, n, b, red, state])
+  }, [strategyId, asOf, n, b, red, state, basis])
   if (!strategyId || !asOf) return null
   if (error) return <p className="qs-warning" role="note">ETF切换参考暂不可用：{error}</p>
   if (!data) return <p className="qs-trigger-dates">正在读取ETF切换价格参考…</p>
-  return <RatioTriggerPanel key={`${data.as_of}:${n}:${b}:${red}`} reference={data} />
+  return <RatioTriggerPanel key={`${data.as_of}:${n}:${b}:${red}:${basis}`} reference={data} />
 }
