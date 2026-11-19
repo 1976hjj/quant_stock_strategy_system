@@ -9,10 +9,11 @@ import QualityTradePlan from './QualityTradePlan'
 import type { LatestRebalance } from './QualityTradePlan'
 import { StyleRotationControls, StyleRotationResults, DEFAULT_ROTATION, rotationValidation } from './StyleRotationControls'
 import type { RotationParameters, RotationResult } from './StyleRotationControls'
-import { RatioRotationControls, RatioRotationResults, DEFAULT_RATIO, ratioValidation, ratioDraft, ratioUsesClose, ratioMinimumStart, ratioSignalName, ratioGrowthName } from './RatioRotationControls'
+import { RatioRotationControls, RatioRotationResults, DEFAULT_RATIO, formatRatioWealthRate, ratioValidation, ratioDraft, ratioUsesClose, ratioUsesWealth, ratioWealthRate, ratioMinimumStart, ratioSignalName, ratioGrowthName, INDEX_PROXY_MIN_START } from './RatioRotationControls'
 import type { RatioParameters, RatioResult } from './RatioRotationControls'
 import { RatioNextSignal } from './RatioRotationControls'
 import { ratioPercentile } from './RatioHistoryPosition'
+import { ratioPerformance } from './ratioPerformance'
 export { RatioNextSignal } from './RatioRotationControls'
 export { RatioTriggerPanel, ratioTriggerEstimate, ratioTriggerRanges } from './RatioTriggerReference'
 export { RatioHistoryPosition } from './RatioHistoryPosition'
@@ -20,7 +21,7 @@ export { QualityTradePlan }
 export { preloadQualityStrategies, readQuality, invalidateQualityReads } from './qualityPreload'
 
 type Metrics = { total_return?: number; annualized_return?: number; maximum_drawdown?: number; sharpe?: number }
-type Day = { session: string; nav: number; cash?: number; positions?: number; daily_return?: number; actual_stock_exposure?: number; dividend_cash?: number; cost?: number; missing_marks?: number; holdings?: Position[] }
+type Day = { session: string; nav: number; cash?: number; positions?: number; daily_return?: number; actual_stock_exposure?: number; dividend_cash?: number; defensive_cash_active?: boolean; defensive_annual_rate?: number; cash_interest?: number; cost?: number; missing_marks?: number; holdings?: Position[] }
 type ComparisonBenchmark = { benchmark_id: string; name: string; status: string; daily: Array<{ session: string; close: number }>; note?: string; missing_sessions?: number; coverage?: { start: string; end: string }; publication_date?: string }
 type Job = { job_id: string; status: string; stop_error?: string; calculation_mode?: string; phase?: string; progress?: number; error?: string; created_at?: string; finished_at?: string; current_session?: string; processed_sessions?: number; total_sessions?: number }
 type Position = { rotation_style?: string; ts_code: string; security_name?: string; industry_name?: string | null; industry_l3_name?: string | null; industry_in_date?: string; industry_out_date?: string | null; quantity?: number; close?: number; market_value_cny?: number; cost_basis_cny?: number; average_cost_price?: number; unrealized_pnl_cny?: number; unrealized_pnl_pct?: number; daily_price_change_pct?: number; daily_price_change_cny?: number; daily_price_change_status?: string; holding_since_session?: string; last_rebalance_session?: string; weight?: number; rank?: number; score?: number }
@@ -141,6 +142,13 @@ export function CalculationStatus({ job, hasPreviousResult, onStop, stopping = f
 
 type RatioSnapshot = { ratio?: number; deviation?: number; percentile?: number }
 
+const PRICE_CHANGE_STATUS_LABELS: Record<string, string> = {
+  MISSING_MARK: '估值沿用',
+  PREVIOUS_MISSING_MARK: '上日估值沿用',
+  UNVERIFIED_MARK_SOURCE: '估值来源待核对',
+  SHARE_ADJUSTMENT: '送转待核对',
+}
+
 function AccountSnapshot({ day, shownHoldings, initialCash, cumulativeReturn, drawdown, value, holdingsOpen, onHoldingsToggle, onOpenDetails, ratioSnapshot }: {
   day: Day; shownHoldings: Array<Position | null>; initialCash?: number; cumulativeReturn?: number; drawdown: number; value: number; holdingsOpen: boolean; onHoldingsToggle: (open: boolean) => void; onOpenDetails?: () => void
   ratioSnapshot?: RatioSnapshot
@@ -152,8 +160,9 @@ function AccountSnapshot({ day, shownHoldings, initialCash, cumulativeReturn, dr
         ['累计收益', pct(cumulativeReturn)], ['当日收益', pct(day.daily_return)],
         ['当前回撤', pct(drawdown)], ['图示净值', num(value, 4)],
         ['初始资金', initialCash == null ? '未记录' : `${num(initialCash)} 元`], ['账户权益', `${num(day.nav)} 元`],
-        ['现金', day.cash == null ? '未记录' : `${num(day.cash)} 元`], ['股票市值', stockValue == null ? '未记录' : `${num(stockValue)} 元`],
+        [day.defensive_cash_active ? '防守资金（理财模拟）' : '现金', day.cash == null ? '未记录' : `${num(day.cash)} 元`], ['股票市值', stockValue == null ? '未记录' : `${num(stockValue)} 元`],
         ['实际股票仓位', pct(exposure)], ['持仓数量', day.positions == null ? '未记录' : `${day.positions} 只`],
+        ...(day.defensive_cash_active != null && day.cash_interest != null ? [['本交易日入账利息', `${num(day.cash_interest)} 元`]] : []),
         ...(ratioSnapshot ? [
           ['当日比值', ratioSnapshot.ratio?.toFixed(4) ?? '—'],
           ['比值距均线', pct(ratioSnapshot.deviation)],
@@ -167,9 +176,9 @@ function AccountSnapshot({ day, shownHoldings, initialCash, cumulativeReturn, dr
         <td>{num(p.quantity, 0)} 股<small>成本 {num(p.average_cost_price, 4)}</small></td>
         <td>{pct(p.market_value_cny == null || day.nav <= 0 ? undefined : p.market_value_cny / day.nav)}</td>
         <td>{num(p.market_value_cny)}</td>
-        <td className={p.daily_price_change_pct == null || p.daily_price_change_pct === 0 ? '' : p.daily_price_change_pct > 0 ? 'qs-holding-profit' : 'qs-holding-loss'}>{p.daily_price_change_pct == null ? '—' : `${p.daily_price_change_pct > 0 ? '+' : ''}${pct(p.daily_price_change_pct)}`}<small>{p.daily_price_change_cny == null ? (p.daily_price_change_status === 'MISSING_MARK' ? '估值沿用' : p.daily_price_change_status === 'SHARE_ADJUSTMENT' ? '送转待核对' : '未记录') : `${signedNum(p.daily_price_change_cny)} 元`}</small></td>
+        <td className={p.daily_price_change_pct == null || p.daily_price_change_pct === 0 ? '' : p.daily_price_change_pct > 0 ? 'qs-holding-profit' : 'qs-holding-loss'}>{p.daily_price_change_pct == null ? '—' : `${p.daily_price_change_pct > 0 ? '+' : ''}${pct(p.daily_price_change_pct)}`}<small>{p.daily_price_change_cny == null ? (PRICE_CHANGE_STATUS_LABELS[p.daily_price_change_status || ''] ?? '未记录') : `${signedNum(p.daily_price_change_cny)} 元`}</small></td>
         <td className={p.unrealized_pnl_cny == null || p.unrealized_pnl_cny === 0 ? '' : p.unrealized_pnl_cny > 0 ? 'qs-holding-profit' : 'qs-holding-loss'}>{signedNum(p.unrealized_pnl_cny)}<small>{p.unrealized_pnl_pct == null ? '—' : `${p.unrealized_pnl_pct > 0 ? '+' : ''}${pct(p.unrealized_pnl_pct)}`}</small></td>
-      </tr>)}</tbody></table></div>}{!day.holdings.length && <small>空仓</small>}<footer>较上日涨跌按未复权收盘价比较，金额＝价差×当日持股数，未计现金分红与交易费用；调仓日不等同于该股实际当日盈亏。缺少前收、估值沿用或送转未核对时不估算。持仓保留行位，新股票补入空位。本轮建仓日为从空仓买入该股的日期，清仓后再买才重置；加减仓仅更新最近买卖日，分红、送转不计入。单股浮盈亏＝当日市值－剩余持仓成本；成本含买入费用，浮盈亏不含现金分红及预计卖出费用。缺少成本记录时不估算。账户累计收益包含回测已计入的分红与费用，与下方实盘参考资金分开。</footer></details> : <p>此版本未保存逐日持仓明细；后续重算会保存。</p>}
+      </tr>)}</tbody></table></div>}{!day.holdings.length && <small>{day.defensive_cash_active ? `持有防守资金，按年化${formatRatioWealthRate(day.defensive_annual_rate ?? .03)}计息` : '空仓'}</small>}<footer>较上日涨跌按未复权收盘价比较，金额＝价差×当日持股数，未计现金分红与交易费用；调仓日不等同于该股实际当日盈亏。缺少前收、估值沿用或送转未核对时不估算。持仓保留行位，新股票补入空位。本轮建仓日为从空仓买入该股的日期，清仓后再买才重置；加减仓仅更新最近买卖日，分红、送转不计入。单股浮盈亏＝当日市值－剩余持仓成本；成本含买入费用，浮盈亏不含现金分红及预计卖出费用。缺少成本记录时不估算。账户累计收益包含回测已计入的分红与费用，与下方实盘参考资金分开。</footer></details> : <p>此版本未保存逐日持仓明细；后续重算会保存。</p>}
       {!!day.missing_marks && <p>当日有 {day.missing_marks} 只持仓缺少价格，沿用回测估值。</p>}
 
   </>
@@ -178,6 +187,7 @@ function AccountSnapshot({ day, shownHoldings, initialCash, cumulativeReturn, dr
 const HOLDING_STYLES = {
   GROWTH: { color: '#2563eb', label: '成长持仓' },
   DIVIDEND: { color: '#dc2626', label: '红利持仓' },
+  WEALTH: { color: '#16856f', label: '理财持仓' },
   MIXED: { color: '#7c3aed', label: '共同持仓' },
   CASH: { color: '#9ca3af', label: '空仓' },
   UNKNOWN: { color: '#9ca3af', label: '持仓未记录' },
@@ -185,6 +195,7 @@ const HOLDING_STYLES = {
 type HoldingStyle = keyof typeof HOLDING_STYLES
 
 function ratioHoldingStyle(day: Day): HoldingStyle {
+  if (day.defensive_cash_active) return 'WEALTH'
   if (day.holdings == null) return 'UNKNOWN'
   const positions = day.holdings.filter(position => (position.market_value_cny ?? position.quantity ?? 0) > 0)
   const growth = positions.some(position => position.rotation_style === 'GROWTH' || ['159915.SZ', '588000.SH', '399606.SZ'].includes(position.ts_code))
@@ -230,14 +241,17 @@ export function Curve({ daily, initialCash, showLatestDetails = false, benchmark
   const containerRef = useRef<HTMLDivElement>(null)
   const tooltipRef = useRef<HTMLElement>(null)
   const holdingStyles = useMemo(() => colorByStyle ? daily.map(ratioHoldingStyle) : [], [daily, colorByStyle])
-  const benchmarkValues = useMemo(() => {
+  const { benchmarkValues, benchmarkBase } = useMemo(() => {
     const closes = new Map((benchmark?.daily || []).map(row => [row.session, row.close]))
     const baseline = closes.get(daily[0]?.session)
-    if (benchmark?.status !== 'OK' || baseline == null || !Number.isFinite(baseline) || baseline <= 0) return daily.map(() => undefined)
-    return daily.map(day => {
+    if (benchmark?.status !== 'OK' || baseline == null || !Number.isFinite(baseline) || baseline <= 0) {
+      return { benchmarkValues: daily.map(() => undefined), benchmarkBase: undefined }
+    }
+    const benchmarkValues = daily.map(day => {
       const close = closes.get(day.session)
       return close != null && Number.isFinite(close) && close > 0 ? close / baseline : undefined
     })
+    return { benchmarkValues, benchmarkBase: baseline }
   }, [benchmark, daily])
   // Replay slots chronologically, never in cursor traversal order. Continuing
   // holdings keep their rows; new names take vacated slots, regardless of prices.
@@ -305,12 +319,22 @@ export function Curve({ daily, initialCash, showLatestDetails = false, benchmark
   const visibleDrawdowns = drawdowns.slice(timeRange.start, timeRange.end + 1)
   const visibleBenchmark = benchmarkValues.slice(timeRange.start, timeRange.end + 1).filter((v): v is number => v != null)
   const low = Math.min(...visibleValues, ...visibleBenchmark); const high = Math.max(...visibleValues, ...visibleBenchmark)
+  const valueSpan = Math.max(.01, high - low)
+  const benchmarkName = benchmark?.name
+  const etfBenchmark = benchmarkName === '创业板ETF（价格）' || benchmarkName === '科创50ETF（价格）'
+  const benchmarkAxisTitle = visibleBenchmark.length && benchmarkBase != null
+    ? etfBenchmark ? benchmarkName.replace('（价格）', '（元）')
+      : benchmarkName === '创业板全收益指数（代理）' ? '创业板全收益指数（点）' : undefined
+    : undefined
+  const plotLeft = 48
+  const plotRight = benchmarkAxisTitle ? 904 : 932
+  const plotWidth = plotRight - plotLeft
   const drawdownSteps = Math.max(1, Math.ceil(-Math.min(0, ...visibleDrawdowns) * 20 - 1e-9))
   const ddLow = -drawdownSteps * .05
   const drawdownHeight = Math.max(65, drawdownSteps * 14)
   const chartHeight = 340 + drawdownHeight - 65
-  const x = (i: number) => 48 + (i - timeRange.start) / Math.max(1, timeRange.end - timeRange.start) * 884
-  const y = (v: number) => 32 + (high - v) / Math.max(.01, high - low) * 172
+  const x = (i: number) => plotLeft + (i - timeRange.start) / Math.max(1, timeRange.end - timeRange.start) * plotWidth
+  const y = (v: number) => 32 + (high - v) / valueSpan * 172
   const dy = (v: number) => 242 + v / ddLow * drawdownHeight
   const points = visibleValues.map((v, i) => `${x(timeRange.start + i)},${y(v)}`).join(' ')
   const styleSegments: Array<{ style: HoldingStyle; start: number; end: number; points: string[] }> = []
@@ -328,7 +352,7 @@ export function Curve({ daily, initialCash, showLatestDetails = false, benchmark
       }
     }
   }
-  const styleLegend = [...new Set<HoldingStyle>(['GROWTH', 'DIVIDEND', ...holdingStyles.slice(timeRange.start, timeRange.end + 1)])]
+  const styleLegend = [...new Set<HoldingStyle>(['GROWTH', ratioUsesWealth(ratioResult?.parameters) ? 'WEALTH' : 'DIVIDEND', ...holdingStyles.slice(timeRange.start, timeRange.end + 1)])]
   const ddPoints = visibleDrawdowns.map((v, i) => `${x(timeRange.start + i)},${dy(v)}`).join(' ')
   let benchmarkConnected = false
   const benchmarkPath = benchmarkValues.slice(timeRange.start, timeRange.end + 1).map((v, i) => {
@@ -348,7 +372,7 @@ export function Curve({ daily, initialCash, showLatestDetails = false, benchmark
     if (scale <= 0) return
     const px = (event.clientX - rect.left - (rect.width - 980 * scale) / 2) / scale
     const py = (event.clientY - rect.top - (rect.height - chartHeight * scale) / 2) / scale
-    const next = Math.max(timeRange.start, Math.min(timeRange.end, timeRange.start + Math.round((px - 48) / 884 * (timeRange.end - timeRange.start))))
+    const next = Math.max(timeRange.start, Math.min(timeRange.end, timeRange.start + Math.round((px - plotLeft) / plotWidth * (timeRange.end - timeRange.start))))
     placeTooltip(next)
     setHovered(next)
     setPointerY(Number.isFinite(py) ? Math.max(26, Math.min(chartHeight - 29, py)) : null)
@@ -371,7 +395,17 @@ export function Curve({ daily, initialCash, showLatestDetails = false, benchmark
       setPointerY(null)
       setHovered(i => e.key === 'Home' ? timeRange.start : e.key === 'End' ? timeRange.end : Math.max(timeRange.start, Math.min(timeRange.end, (i ?? timeRange.end) + (e.key === 'ArrowLeft' ? -1 : 1))))
     }}>
-    {[0, .5, 1].map(f => <g key={f}><line x1="48" y1={32 + f * 172} x2="932" y2={32 + f * 172} stroke="#dce5df" /><text x="4" y={37 + f * 172}>{(high - f * (high - low)).toFixed(2)}</text></g>)}
+    {benchmarkAxisTitle && <text className="qs-benchmark-axis" x="976" y="21" textAnchor="end">{benchmarkAxisTitle}</text>}
+    {[0, .5, 1].map(f => {
+      const tick = high - f * valueSpan
+      const tickY = 32 + f * 172
+      const benchmarkTick = benchmarkBase == null ? undefined : tick * benchmarkBase
+      return <g key={f}>
+        <line x1={plotLeft} y1={tickY} x2={plotRight} y2={tickY} stroke="#dce5df" />
+        <text x="4" y={tickY + 5}>{tick.toFixed(2)}</text>
+        {benchmarkAxisTitle && benchmarkTick != null && <text className="qs-benchmark-axis qs-benchmark-tick" x="976" y={tickY + 5} textAnchor="end">{etfBenchmark ? benchmarkTick.toFixed(3) : num(benchmarkTick)}</text>}
+      </g>
+    })}
     {benchmarkPath.trim() && <path className="qs-benchmark-line" aria-label={`${benchmark?.name}对照曲线`} d={benchmarkPath} fill="none" />}
     {colorByStyle ? styleSegments.map(segment => <polyline key={`${segment.start}-${segment.style}`}
       className="qs-style-nav-line" data-holding-style={segment.style}
@@ -379,12 +413,12 @@ export function Curve({ daily, initialCash, showLatestDetails = false, benchmark
       aria-label={`${HOLDING_STYLES[segment.style].label}净值线段`}
       points={segment.points.join(' ')} fill="none" stroke={HOLDING_STYLES[segment.style].color} strokeWidth="2" />)
       : <polyline points={points} fill="none" stroke="#176648" strokeWidth="2" />}
-    <text x="48" y="226">净值（图示起点＝1）</text>
-    {Array.from({ length: drawdownSteps + 1 }, (_, i) => <g key={i} className="qs-drawdown-tick"><line x1="48" y1={dy(-i * .05)} x2="932" y2={dy(-i * .05)} stroke="#dce5df" /><text x="4" y={dy(-i * .05) + 4}>{i === 0 ? '0%' : `-${i * 5}%`}</text></g>)}
+    <text x={plotLeft} y="226">净值（图示起点＝1）</text>
+    {Array.from({ length: drawdownSteps + 1 }, (_, i) => <g key={i} className="qs-drawdown-tick"><line x1={plotLeft} y1={dy(-i * .05)} x2={plotRight} y2={dy(-i * .05)} stroke="#dce5df" /><text x="4" y={dy(-i * .05) + 4}>{i === 0 ? '0%' : `-${i * 5}%`}</text></g>)}
     <polyline points={ddPoints} fill="none" stroke="#bd6653" strokeWidth="1.5" />
     {index != null && <g className="qs-curve-crosshair" pointerEvents="none">
       <line x1={x(index)} x2={x(index)} y1="26" y2={chartHeight - 29} stroke="#78998a" strokeDasharray="4 4" />
-      <line x1="48" x2="932" y1={crosshairY!} y2={crosshairY!} stroke="#78998a" strokeDasharray="4 4" />
+      <line x1={plotLeft} x2={plotRight} y1={crosshairY!} y2={crosshairY!} stroke="#78998a" strokeDasharray="4 4" />
       <circle cx={x(index)} cy={y(values[index])} r="4" fill={colorByStyle ? HOLDING_STYLES[holdingStyles[index]].color : '#176648'} stroke="#fff" strokeWidth="2" />
       <circle cx={x(index)} cy={dy(drawdowns[index])} r="3" fill="#bd6653" stroke="#fff" />
     </g>}
@@ -400,8 +434,30 @@ export function Curve({ daily, initialCash, showLatestDetails = false, benchmark
   </div>
 }
 
-function MetricCards({ summary }: { summary: Metrics }) {
-  return <div className="qs-metrics">{[['累计收益', pct(summary.total_return)], ['年化收益', pct(summary.annualized_return)], ['最大回撤', pct(summary.maximum_drawdown)], ['夏普', num(summary.sharpe)]].map(([label, value]) => <div key={label}><small>{label}</small><b>{value}</b></div>)}</div>
+function MetricCards({ summary, ratioAccount }: { summary: Metrics; ratioAccount?: Signal['historical_replay'] }) {
+  const performance = useMemo(() => ratioAccount
+    ? ratioPerformance(ratioAccount.daily, ratioAccount.daily.map(ratioHoldingStyle), ratioAccount.comparison_benchmark, ratioAccount.initial_cash_cny)
+    : null, [ratioAccount])
+  const cards: Array<[string, string, string?]> = [['累计收益', pct(summary.total_return)], ['年化收益', pct(summary.annualized_return)], ['最大回撤', pct(summary.maximum_drawdown)], ['夏普', num(summary.sharpe)]]
+  if (!ratioAccount) return <div className="qs-metrics">{cards.map(([label, value]) => <div key={label}><small>{label}</small><b>{value}</b></div>)}</div>
+
+  const periods = performance?.periods, recovery = performance?.recovery, regression = performance?.regression
+  cards.push(
+    ['策略胜率', pct(periods?.completed ? periods.wins / periods.completed : undefined), periods ? `${periods.wins}胜／${periods.completed}段已结束持仓` : '实际持仓资料不足'],
+    ['已完成交易次数', periods ? `${num(periods.completed, 0)} 次` : '—', '一次建仓到退出计一次'],
+    ['最长连续亏损', periods?.completed ? `${num(periods.longestLosses, 0)} 次` : '—',
+      periods?.longestLossPeriod ? `${periods.longestLossPeriod.start} → ${periods.longestLossPeriod.end}` : undefined],
+    ['年化 Alpha', pct(regression?.alpha)],
+    ['Beta', num(regression?.beta, 3)],
+    ['最大回撤恢复时间', !recovery ? '—' : recovery.recovered ? `${num(recovery.recoverySessions, 0)} 个交易日` : `尚未恢复（${num(recovery.recoverySessions, 0)}个交易日）`,
+      recovery ? `${recovery.trough} → ${recovery.end}${recovery.recovered ? '恢复' : '（回测截止）'}` : undefined],
+  )
+  return <section className="qs-ratio-metrics" aria-label="比值轮动统计">
+    <div className="qs-metrics">{cards.map(([label, value, note]) => <div key={label}><small>{label}</small><b>{value}</b>{note && <small>{note}</small>}</div>)}</div>
+    <p>胜率、次数和连亏按已完成的证券持仓段统计，以建仓日和退出日的收盘净值计算，理财段视为空仓。{recovery && `最大回撤自前高 ${recovery.peak} 共${num(recovery.underwaterSessions, 0)}个交易日。 `}
+      {regression ? `Alpha 与 Beta 基于完整账户，对照${ratioAccount.comparison_benchmark?.name}，使用${num(regression.sessions, 0)}个日收益样本。无风险利率按0%计，Alpha 按252个交易日年化。` : '对照日收益样本不足或波动为零。'}
+    </p>
+  </section>
 }
 
 export default function QualityStrategies() {
@@ -569,7 +625,13 @@ export default function QualityStrategies() {
         const [code, quantity] = parts
         return { ts_code: code.toUpperCase(), quantity: Number(quantity) }
       }) : []
-      const result = await request<Job>(`quality-strategies/${encodeURIComponent(sid)}/calculate`, { rebuild_factors: rebuildFactors, ...(detail?.strategy_kind === 'ETF_STYLE_ROTATION' ? { rotation_parameters: rotationParameters } : {}), ...(detail?.strategy_kind === 'CHINEXT_DIVIDEND_RATIO' ? { ratio_parameters: ratioParameters } : {}), ...(detail?.supports_entry_score ? { minimum_entry_score: entryScoreEnabled ? Number(entryScore) : null } : {}), start: backtestStart, as_of: asOf || null, capital_cny: Number(capital), current_holdings: current })
+      const { hold_low_chinext, hold_ratio_percentile, hold_price_cny, defensive_annual_rate, ...originalRatioParameters } = ratioParameters
+      const ratioRequest = {
+        ...originalRatioParameters,
+        ...(hold_low_chinext ? { hold_low_chinext, hold_ratio_percentile, hold_price_cny } : {}),
+        ...(ratioUsesWealth(ratioParameters) ? { defensive_annual_rate } : {}),
+      }
+      const result = await request<Job>(`quality-strategies/${encodeURIComponent(sid)}/calculate`, { rebuild_factors: rebuildFactors, ...(detail?.strategy_kind === 'ETF_STYLE_ROTATION' ? { rotation_parameters: rotationParameters } : {}), ...(detail?.strategy_kind === 'CHINEXT_DIVIDEND_RATIO' ? { ratio_parameters: ratioRequest } : {}), ...(detail?.supports_entry_score ? { minimum_entry_score: entryScoreEnabled ? Number(entryScore) : null } : {}), start: backtestStart, as_of: asOf || null, capital_cny: Number(capital), current_holdings: current })
       if (selectionVersion.current === version) setJob(result)
     } catch (e) { if (selectionVersion.current === version) setError(String(e)) }
     finally { if (selectionVersion.current === version) setLoading(false) }
@@ -667,16 +729,16 @@ export default function QualityStrategies() {
       <div className="qs-detail" aria-busy={detailLoading}>{detailLoading && detail && <div className="qs-detail-loading" role="status">正在读取 {items.find(r => r.strategy_id === selected)?.name || '策略'}…</div>}{detail && detail.strategy_id !== selected && !detailLoading && <p className="qs-warning" role="status">当前选择未能读取，以下仍是 {detail.name} 的内容。</p>}<div className="qs-detail-content" inert={detailLoading || (!!detail && detail.strategy_id !== selected) || undefined}>{!detail ? <section className="qs-panel qs-detail-placeholder" aria-label="策略详情加载区"><p>{error ? '策略读取失败，请重新选择重试。' : '正在读取策略证据…'}</p>{!error && <div className="qs-placeholder-lines" aria-hidden="true"><i /><i /><i /></div>}</section> : <>
         <section className="qs-panel"><h2>{isRatioRotation && signal?.ratio_rotation ? `${ratioGrowthName(signal.ratio_rotation.parameters)}红利低波 · 比值轮动` : detail.name}</h2>{countVariants.length > 1 && <nav className="qs-count-switch" aria-label={missingComparisonLabel(detail) ? '缺失处理方案切换' : '持股数量切换'}><span>{missingComparisonLabel(detail) ? '对照方案' : differentVariantCadence ? '策略版本' : '持股数量'}</span><div>{countVariants.map(item => <button key={item.strategy_id} type="button" aria-pressed={selected === item.strategy_id} onClick={() => void choose(item.strategy_id)}>{variantLabel(item)}</button>)}</div></nav>}{stockScopeVariants.length > 1 && <nav className="qs-count-switch qs-scope-switch" aria-label="股票范围切换"><span>股票范围</span><div>{stockScopeVariants.map(item => <button key={item.strategy_id} type="button" aria-pressed={selected === item.strategy_id} onClick={() => void choose(item.strategy_id)}>{stockScopeLabel(item)}</button>)}</div></nav>}{holdingCountVariants.length > 1 && <nav className="qs-count-switch qs-holding-count-switch" aria-label="持股数量切换"><span>持股数量</span><div>{holdingCountVariants.map(item => <button key={item.strategy_id} type="button" aria-pressed={selected === item.strategy_id} onClick={() => void choose(item.strategy_id)}>{item.target_count}股</button>)}</div></nav>}{cadenceVariants.length > 1 && <nav className="qs-count-switch qs-cadence-switch" aria-label="调仓频率切换"><span>调仓频率</span><div>{cadenceVariants.map(item => <button key={item.strategy_id} type="button" aria-pressed={selected === item.strategy_id} onClick={() => void choose(item.strategy_id)}>{cadenceLabel(item)}</button>)}</div></nav>}
           {detail.supports_entry_score && <div className="qs-count-switch qs-entry-score" role="group" aria-label="入选评分设置"><span>入选评分</span><div><button type="button" aria-pressed={!entryScoreEnabled} onClick={() => setEntryScoreEnabled(false)}>不设门槛</button><button type="button" aria-pressed={entryScoreEnabled} onClick={() => setEntryScoreEnabled(true)}>启用门槛</button></div>{entryScoreEnabled && <label className="qs-entry-score-value">最低<input aria-label="最低入选评分" type="number" min="0" max="100" step="any" value={entryScore} onChange={e => setEntryScore(e.target.value)} />分</label>}<small>调仓时新买与保留股票都须达标，最多{detail.target_count}只；不足的空位留现金。仅设置参数，点击下方“回测／更新最新信号”生效。</small></div>}
-          <p>{isRatioRotation && ratioUsesClose(signal?.ratio_rotation?.parameters) ? `本次使用${ratioSignalName(signal?.ratio_rotation?.parameters)}，突破均线上下缓冲带切换；按当日收盘价加减固定价差模拟。周期与缓冲带以本次结果参数为准。` : detail.notes}</p>{detail.evidence_error && <div role="alert" className="error-banner">证据不能读取：{detail.evidence_error}</div>}<div className="qs-facts">{trainingPeriod(detail) && <span>权重训练期：{trainingPeriod(detail)}</span>}{diagnosticOnly && <span>固定权重 · 全区间事后回看</span>}<span>{isRatioRotation ? ratioSignalName(signal?.ratio_rotation?.parameters) : isStyleRotation ? '成长／防守ETF组合' : `${detail.target_count}只股票`}</span>{detail.request.take_profit_policy === 'GAIN_50_CLEAR' && <span>盈利50%清仓</span>}{detail.information_clock && <span>{isRatioRotation && ratioUsesClose(signal?.ratio_rotation?.parameters) ? '当日收盘价 · 尾盘近似模拟' : '收盘后决策，次日执行'}</span>}<span>{isRatioRotation && ratioUsesClose(signal?.ratio_rotation?.parameters) ? '收盘信号 · 同日模拟' : isStyleRotation ? '收盘判定，次日执行' : `${detail.schedule === 'HALF_YEAR' ? '自然半年末（6月／12月）' : detail.schedule === 'QUARTER' ? '自然季度末' : `${detail.rebalance_sessions}交易日`}选股`}</span><span>{isRatioRotation ? '两端全仓切换' : isStyleRotation ? '腿内等权，风格间切换' : detail.allocation === 'INVERSE_RESVOL' ? '风险倒数分权' : '等权'}</span>{detail.retained_rebalance_policy === 'BAND25' && <span>留仓偏离25%才调权</span>}<span>{detail.fixed_exposure != null ? `${isRatioRotation && signal?.ratio_parameters?.data_mode === 'ETF_STOCK' ? '证券配置预算' : isStyleRotation ? 'ETF配置预算' : resultEntryScore != null ? '股票目标上限' : '固定股票目标'} ${pct(detail.fixed_exposure * (1 - detail.request.minimum_cash_fraction))}` : detail.request.shadow_health.experiment_variant === 'S0' ? '不启用影子择时' : `影子 ${detail.request.shadow_health.experiment_variant}`}</span></div>
+          <p>{isRatioRotation && ratioUsesWealth(signal?.ratio_rotation?.parameters) ? `沿用399006／H30269价格指数比值，成长端持有创业板全收益指数，防守端按年化${formatRatioWealthRate(ratioWealthRate(signal?.ratio_rotation?.parameters))}模拟理财。切换按下一交易日收盘模拟。` : isRatioRotation && ratioUsesClose(signal?.ratio_rotation?.parameters) ? `本次使用${ratioSignalName(signal?.ratio_rotation?.parameters)}，突破均线上下缓冲带切换；按当日收盘价加减固定价差模拟。周期与缓冲带以本次结果参数为准。` : detail.notes}</p>{detail.evidence_error && <div role="alert" className="error-banner">证据不能读取：{detail.evidence_error}</div>}<div className="qs-facts">{trainingPeriod(detail) && <span>权重训练期：{trainingPeriod(detail)}</span>}{diagnosticOnly && <span>固定权重 · 全区间事后回看</span>}<span>{isRatioRotation ? ratioSignalName(signal?.ratio_rotation?.parameters) : isStyleRotation ? '成长／防守ETF组合' : `${detail.target_count}只股票`}</span>{detail.request.take_profit_policy === 'GAIN_50_CLEAR' && <span>盈利50%清仓</span>}{detail.information_clock && <span>{isRatioRotation && ratioUsesClose(signal?.ratio_rotation?.parameters) ? '当日收盘价 · 尾盘近似模拟' : '收盘后决策，次日执行'}</span>}<span>{isRatioRotation && ratioUsesClose(signal?.ratio_rotation?.parameters) ? '收盘信号 · 同日模拟' : isStyleRotation ? '收盘判定，次日执行' : `${detail.schedule === 'HALF_YEAR' ? '自然半年末（6月／12月）' : detail.schedule === 'QUARTER' ? '自然季度末' : `${detail.rebalance_sessions}交易日`}选股`}</span><span>{isRatioRotation ? '两端全仓切换' : isStyleRotation ? '腿内等权，风格间切换' : detail.allocation === 'INVERSE_RESVOL' ? '风险倒数分权' : '等权'}</span>{detail.retained_rebalance_policy === 'BAND25' && <span>留仓偏离25%才调权</span>}<span>{detail.fixed_exposure != null ? `${isRatioRotation && signal?.ratio_parameters?.data_mode === 'ETF_STOCK' ? '证券配置预算' : isStyleRotation ? 'ETF配置预算' : resultEntryScore != null ? '股票目标上限' : '固定股票目标'} ${pct(detail.fixed_exposure * (1 - detail.request.minimum_cash_fraction))}` : detail.request.shadow_health.experiment_variant === 'S0' ? '不启用影子择时' : `影子 ${detail.request.shadow_health.experiment_variant}`}</span></div>
           {!signal && hasResearchReplay(detail) && <div aria-label={detail.evidence_version === 'UNIVERSE_DIAGNOSTIC' ? '股票范围对照回测' : diagnosticOnly ? '权重训练期对照回测' : '缺失处理独立回测'}><b>{detail.evidence_version === 'UNIVERSE_DIAGNOSTIC' ? '股票范围对照回测' : detail.evidence_version === 'WEIGHT_REFIT_DIAGNOSTIC' ? '权重训练期对照 · 全区间回测' : detail.evidence_version === 'TAKE_PROFIT_DIAGNOSTIC' ? '50%止盈独立回测' : '缺失处理独立回测'}</b><p>{detail.start} → {detail.end}{diagnosticOnly ? '；全程固定使用2020—2025年训练权重。2016—2019年使用后来训练的权重，2020—2025年属于训练样本内，2026年属于已查看历史；全区间为事后诊断，不代表当时可执行或独立样本外验证。' : '；固定输入对照，原策略另行保留。这是已暴露历史的研究结果，不代表实盘或未见样本验证。'}</p>{detail.daily.some(d => (d.positions || 0) > detail.target_count) && <p className="qs-warning" role="note">目标{detail.target_count}股；历史实际持仓最多{Math.max(...detail.daily.map(d => d.positions || 0))}只，共{detail.daily.filter(d => (d.positions || 0) > detail.target_count).length}个交易日超过目标。未成交的原持仓仍计入账户，实际持仓以图表明细为准。</p>}<MetricCards summary={detail.summary} /><Curve benchmark={detail.comparison_benchmark} daily={detail.daily} initialCash={detail.initial_cash_cny} showLatestDetails /><TakeProfitResults result={detail.take_profit} schedule={detail.schedule === 'HALF_YEAR' ? '下一次半年调仓' : undefined} /><div className="qs-years">{detail.annual.map(y => <div key={y.year}><small>{y.year}</small><b>{pct(y.return)}</b></div>)}</div></div>}{!diagnosticOnly && <>{isCalculating(job) && <CalculationStatus job={job!} hasPreviousResult={!!signal} stopping={stopping} onStop={() => void stopCalculation()} />}<div className="qs-rebuild-heading"><b>{isRotationMode(signal?.calculation_mode) ? '最近轮动回测' : signal?.calculation_mode === 'RULE_REPLAY_V1' ? '最近规则重算' : signal?.calculation_mode === 'INCREMENTAL_LOCAL_INPUTS_V1' ? '最近缓存／增量回测' : '最近全量重算'}</b><span className={needsRebuild ? 'qs-update-needed' : 'qs-update-ready'}>{isCalculating(job) ? (job?.status === 'STOPPING' ? '正在停止并清理' : '本次更新中') : calculationLabel(detail.calculation_state, detail.latest_calculation_mode)}</span></div>
           <p>{isRatioRotation ? '按本次均线、缓冲带和数据口径完整回放账户。' : isStyleRotation ? '按冻结的本次参数完整回放ETF账户；银行信号账户与ETF持仓账户分别保存。' : '默认复用已校验因子并补算缺少日期；勾选“强制重建因子”则重建所选范围。每次均完整回放账户并生成持仓。'}</p>
           {needsRebuild && !isCalculating(job) && <p className="qs-warning">{signal ? '来源、公式或规则已变化，下面是上次全量结果；请重算后再用于当前决策。' : detail.evidence_version === 'UNIVERSE_DIAGNOSTIC' ? '上方已展示保存的股票范围对照回测；本地数据更新后，可在下方全量重算。' : '尚无全量重算结果。旧版回放和归档不作为当前结果，请在下方点击全量重算。'}</p>}
           {signal && excessHoldingDays.length > 0 && <p className="qs-warning" role="note">目标{resultTargetCount}只；历史实际持仓最多{Math.max(...excessHoldingDays.map(day => day.positions!))}只，共{excessHoldingDays.length}个交易日超过目标。未成交的原持仓仍计入账户，实际持仓以图表明细为准。</p>}
           {detail.supports_entry_score && <p className="qs-entry-score-result" role="note">当前展示结果入选评分：<b>{entryScoreLabel(resultEntryScore)}</b>。{entryScoreChanged && <span>入选评分已修改，下方仍为上次结果；回测完成后统一更新。</span>}</p>}
-          {signal && <>{signal.input_cache && <p role="note">本次因子：{signal.input_cache.mode === 'REUSE' ? `复用${signal.input_cache.reused_factors}个已校验因子` : signal.input_cache.mode === 'INCREMENTAL' ? `复用历史，增量计算 ${signal.input_cache.rebuilt_start} 至 ${signal.input_cache.rebuilt_end}` : '已重建所选范围'}。{signal.input_cache.reason}；账户完整回放。</p>}<p>{signal.backtest_start || detail.start} → {signal.as_of} · 计算时间 {signal.created_at ? new Date(signal.created_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '—'}</p>{replayCoverageWarnings.length > 0 && <div className="qs-history-gap" role="note"><b>历史财务输入存在缺口，空仓不能直接解释为成功避险</b><p>财务输入不足可能使回测选股为空；这会影响收益和回撤，需补齐当时可用的财报证据后再评价策略。</p>{historicalCashPeriods.length > 0 && <div>{historicalCashPeriods.map(period => <span key={period.start}>回测空仓：{period.start} → {period.end} · {period.sessions}个交易日</span>)}</div>}</div>}{signal.ratio_rotation && <RatioNextSignal strategyId={selected} result={signal.ratio_rotation} accountDay={curve?.daily?.at(-1)} />}<MetricCards summary={curve?.summary || {}} /><Curve ratioResult={signal.ratio_rotation} colorByStyle={isRatioRotation} benchmark={curve?.comparison_benchmark} daily={curve?.daily || []} initialCash={curve?.initial_cash_cny} showLatestDetails /><StyleRotationResults result={signal?.rotation} draft={rotationParameters} /><RatioRotationResults result={signal?.ratio_rotation} draft={ratioParameters} /><TakeProfitResults result={curve?.take_profit} schedule={detail.schedule === 'HALF_YEAR' ? '下一次半年调仓' : undefined} /><div className="qs-years">{curve?.annual?.map(y => <div key={y.year}><small>{y.year}</small><b>{pct(y.return)}</b></div>)}</div>{replayCoverageWarnings.map((w, i) => <p className="qs-warning" key={i}>{w}</p>)}</>}
+          {signal && <>{signal.input_cache && <p role="note">本次因子：{signal.input_cache.mode === 'REUSE' ? `复用${signal.input_cache.reused_factors}个已校验因子` : signal.input_cache.mode === 'INCREMENTAL' ? `复用历史，增量计算 ${signal.input_cache.rebuilt_start} 至 ${signal.input_cache.rebuilt_end}` : '已重建所选范围'}。{signal.input_cache.reason}；账户完整回放。</p>}<p>{signal.backtest_start || detail.start} → {signal.as_of} · 计算时间 {signal.created_at ? new Date(signal.created_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '—'}</p>{replayCoverageWarnings.length > 0 && <div className="qs-history-gap" role="note"><b>历史财务输入存在缺口，空仓不能直接解释为成功避险</b><p>财务输入不足可能使回测选股为空；这会影响收益和回撤，需补齐当时可用的财报证据后再评价策略。</p>{historicalCashPeriods.length > 0 && <div>{historicalCashPeriods.map(period => <span key={period.start}>回测空仓：{period.start} → {period.end} · {period.sessions}个交易日</span>)}</div>}</div>}{signal.ratio_rotation && <RatioNextSignal strategyId={selected} result={signal.ratio_rotation} accountDay={curve?.daily?.at(-1)} />}<MetricCards summary={curve?.summary || {}} ratioAccount={isRatioRotation ? curve : undefined} /><Curve ratioResult={signal.ratio_rotation} colorByStyle={isRatioRotation} benchmark={curve?.comparison_benchmark} daily={curve?.daily || []} initialCash={curve?.initial_cash_cny} showLatestDetails /><StyleRotationResults result={signal?.rotation} draft={rotationParameters} /><RatioRotationResults result={signal?.ratio_rotation} draft={ratioParameters} /><TakeProfitResults result={curve?.take_profit} schedule={detail.schedule === 'HALF_YEAR' ? '下一次半年调仓' : undefined} /><div className="qs-years">{curve?.annual?.map(y => <div key={y.year}><small>{y.year}</small><b>{pct(y.return)}</b></div>)}</div>{replayCoverageWarnings.map((w, i) => <p className="qs-warning" key={i}>{w}</p>)}</>}
           </>}{!isStyleRotation && <details><summary>选股因子与冻结权重{trainingPeriod(detail) ? `（训练期：${trainingPeriod(detail)}）` : ''}</summary><table><thead><tr><th>因子</th><th>方向</th><th>权重</th><th>缺失处理</th></tr></thead><tbody>{scoreRules.map(r => <tr key={r.factor_id}><td>{factorNames[r.factor_id] || r.factor_id}</td><td>{r.direction === 'HIGH' ? '高值优先' : '低值优先'}</td><td>{pct(r.weight / scoreRules.reduce((s, x) => s + x.weight, 0))}</td><td>{r.weight === 0 ? '不计分；仍保留缺失剔除要求' : r.missing_policy === 'WORST' ? '保留未知，该项最低分' : '缺值不参与评分'}</td></tr>)}</tbody></table></details>}
         </section>
-        {!diagnosticOnly && <section className="qs-panel"><h2>{isStyleRotation ? '轮动回测与最新信号' : '最新信号与持仓计算'}</h2>{isBankRotation && <StyleRotationControls value={rotationParameters} onChange={setRotationParameters} defaults={detail.rotation_defaults} />}{isRatioRotation && <RatioRotationControls value={ratioParameters} dataEnd={ratioDataEnd} onChange={next => { setRatioParameters(next); const min = ratioMinimumStart(next); if (backtestStart < min) setBacktestStart(min); const stockEnd = next.signal_basis === 'STAR_ETF_PRICE' ? detail.ratio_star_stock_data_end : detail.ratio_stock_data_end; if (asOf && (asOf < min || (next.data_mode === 'ETF_STOCK' && next.stock_weight > 0 && stockEnd && asOf > stockEnd))) setAsOf('') }} />}{detail.input_access_policy === 'PIT_AVAILABLE' && <p>银行财务按PIT自动开放：仅使用决策时点已可用的披露与修订版本；缺失保留为空，晚采数据不回填更早历史。</p>}{detail.released_input_end && <p className="qs-warning">银行财务输入当前开放至 {detail.released_input_end}。未开放的日期会阻断计算，不会把旧持仓当成今天的结果。</p>}<p>{isRatioRotation ? '从所选开始日以空仓建立独立回测账户，自动读取均线预热历史。曲线、年度收益、十字光标和最新明细使用本次同一账户。' : '按所选时间范围重算并更新最新信号。回测从开始日重新建账，不继承此前持仓；因子自动读取必要的预热历史，权重训练期不变。资金为账户总权益；当前持仓可留空。不会自动下单。'}</p>{isRatioRotation && <div className="qs-range-presets" role="group" aria-label="比值回测区间快捷选择"><button type="button" onClick={() => setAsOf('')}>当前参数至最新</button><button type="button" onClick={() => { setBacktestStart('2016-11-10'); setAsOf('2026-11-06'); setRatioParameters({ ...DEFAULT_RATIO }) }}>指数近十年</button>{(ratioParameters.data_mode === 'ETF_STOCK' ? [ratioMinimumStart(ratioParameters), '2020-01-01', '2024-01-02'] : ratioParameters.signal_basis === 'ETF_PRICE' ? ['2019-01-18', '2020-01-01', '2024-01-02'] : ['2016-01-01', '2020-01-01', '2024-01-02']).filter(start => ratioParameters.signal_basis !== 'STAR_ETF_PRICE' || start >= ratioMinimumStart(ratioParameters)).map(start => <button key={start} type="button" onClick={() => { setBacktestStart(start); setAsOf(''); if (start < '2024-01-02' && ratioParameters.data_mode !== 'ETF_STOCK') setRatioParameters({ ...ratioParameters, data_mode: 'INDEX_PROXY' }) }}>{start.startsWith('2019-') || start === ratioMinimumStart(ratioParameters) ? start : start.slice(0, 4)}至数据最新日</button>)}</div>}{detail.backtest_min_start && detail.backtest_min_start <= '2010-01-01' && <div className="qs-range-presets" role="group" aria-label="回测区间快捷选择"><span>回测区间</span>{[{label:'2010—2015',start:'2010-01-01',end:'2015-12-31'},{label:'2010至最新',start:'2010-01-01',end:''},{label:'2016至最新',start:'2016-01-01',end:''}].map(range => <button key={range.label} type="button" aria-pressed={backtestStart === range.start && asOf === range.end} onClick={() => {setBacktestStart(range.start);setAsOf(range.end)}}>{range.label}</button>)}<small>仅设置日期；点击下方回测按钮运行。2010—2015为训练前历史对照，冻结权重不变。</small></div>}<div className="qs-inputs"><label>{isStyleRotation ? '回测初始资金／参考权益（元）' : '账户总权益（元）'}<input type="number" disabled={isCalculating(job)} min="1" value={capital} onChange={e => setCapital(e.target.value)} /></label><label>回测开始日<input aria-label="回测开始日" type="date" min={minimumStart} max={asOf || undefined} value={backtestStart} onChange={e => setBacktestStart(e.target.value)} /><small>支持从{minimumStart}开始；从较近日期可缩短重算范围。</small></label><label>计算截至日<input type="date" min={backtestStart || minimumStart} value={asOf} onChange={e => setAsOf(e.target.value)} /><small>{isRatioRotation ? `留空使用当前口径最新日 ${ratioDataEnd || '待更新'}；${ratioParameters.data_mode === 'ETF_STOCK' && ratioParameters.stock_weight > 0 ? '单股研究输入版本单独校验' : '行情与指数在数据管理更新'}。` : '留空使用本地行情最新日，输入不足会明确报错。'}</small></label></div>{isCalculating(job) && <p role="note">日期和因子选项可先修改，供下一次计算；当前任务仍按启动时设置运行。</p>}{!isRatioRotation && <div className="qs-factor-cache-option"><label><input type="checkbox" checked={rebuildFactors} onChange={e => { setRebuildFactors(e.target.checked); try { window.localStorage.setItem('alpha-research.quality-rebuild-factors', String(e.target.checked)) } catch { /* Optional preference storage. */ } }} />强制重建因子</label><p>{isStyleRotation ? '该选项用于银行信号账户的因子；ETF账户不计算选股因子。' : '默认不勾选：复用校验通过的历史因子，只补算缺少日期。无兼容缓存、历史来源更正或公式变化时自动重建。'}</p></div>}{!isRatioRotation && <label>当前持仓（可留空）<textarea disabled={isCalculating(job)} placeholder={isStyleRotation ? '每行：ETF代码 份数\n例如 159915.SZ 1000' : '每行：证券代码 股数\n例如 600036.SH 1000'} value={holdings} onChange={e => setHoldings(e.target.value)} /></label>}<button className="primary" disabled={loading || isCalculating(job) || !!detail.evidence_error} onClick={() => void calculate()}>{isCalculating(job) ? '正在计算…' : '回测／更新最新信号'}</button>{job && !isCalculating(job) && <p role="status">{job.status === 'RUNNING' ? `${job.phase || '正在计算'} ${num(job.progress, 0)}%` : job.status === 'STOPPED' ? '本次回测已停止，未完成结果已清理；已校验因子缓存和上次成功结果保留。' : job.status === 'STOPPED' ? '本次回测已停止，未完成结果已清理；已校验因子缓存和上次成功结果保留。' : job.status === 'FAIL' ? (previousDateRestrictionFailure ? '上次计算因旧日期限制中断；现已按PIT开放，请重新计算。' : `计算失败：${job.error}`) : detail.calculation_state === 'UP_TO_DATE' ? (isRotationMode(signal?.calculation_mode) ? '轮动回测完成，结果已保存' : signal?.calculation_mode === 'RULE_REPLAY_V1' ? '规则重算完成，结果已保存' : signal?.calculation_mode === 'INCREMENTAL_LOCAL_INPUTS_V1' ? '缓存／增量计算完成，结果已保存' : '全量重算完成，结果已保存') : '此前结果已保存，仍需完成当前全量重算'}</p>}
+        {!diagnosticOnly && <section className="qs-panel"><h2>{isStyleRotation ? '轮动回测与最新信号' : '最新信号与持仓计算'}</h2>{isBankRotation && <StyleRotationControls value={rotationParameters} onChange={setRotationParameters} defaults={detail.rotation_defaults} />}{isRatioRotation && <RatioRotationControls value={ratioParameters} dataEnd={ratioDataEnd} onChange={next => { setRatioParameters(next); const min = ratioMinimumStart(next); if (backtestStart < min) setBacktestStart(min); const stockEnd = next.signal_basis === 'STAR_ETF_PRICE' ? detail.ratio_star_stock_data_end : detail.ratio_stock_data_end; if (asOf && (asOf < min || (next.data_mode === 'ETF_STOCK' && next.stock_weight > 0 && stockEnd && asOf > stockEnd))) setAsOf('') }} />}{detail.input_access_policy === 'PIT_AVAILABLE' && <p>银行财务按PIT自动开放：仅使用决策时点已可用的披露与修订版本；缺失保留为空，晚采数据不回填更早历史。</p>}{detail.released_input_end && <p className="qs-warning">银行财务输入当前开放至 {detail.released_input_end}。未开放的日期会阻断计算，不会把旧持仓当成今天的结果。</p>}<p>{isRatioRotation ? '从所选开始日以空仓建立独立回测账户，自动读取均线预热历史。曲线、年度收益、十字光标和最新明细使用本次同一账户。' : '按所选时间范围重算并更新最新信号。回测从开始日重新建账，不继承此前持仓；因子自动读取必要的预热历史，权重训练期不变。资金为账户总权益；当前持仓可留空。不会自动下单。'}</p>{isRatioRotation && <div className="qs-range-presets" role="group" aria-label="比值回测区间快捷选择"><button type="button" onClick={() => setAsOf('')}>当前参数至最新</button><button type="button" onClick={() => { setBacktestStart('2016-11-10'); setAsOf('2026-11-06'); setRatioParameters({ ...DEFAULT_RATIO }) }}>指数近十年</button>{(ratioParameters.data_mode === 'ETF_STOCK' ? [ratioMinimumStart(ratioParameters), '2020-01-01', '2024-01-02'] : ratioParameters.signal_basis === 'ETF_PRICE' ? ['2019-01-18', '2020-01-01', '2024-01-02'] : [INDEX_PROXY_MIN_START, '2016-01-01', '2020-01-01', '2024-01-02']).filter(start => ratioParameters.signal_basis !== 'STAR_ETF_PRICE' || start >= ratioMinimumStart(ratioParameters)).map(start => <button key={start} type="button" onClick={() => { setBacktestStart(start); setAsOf(''); if (start < '2024-01-02' && ratioParameters.data_mode !== 'ETF_STOCK') setRatioParameters({ ...ratioParameters, data_mode: 'INDEX_PROXY' }) }}>{start.startsWith('2019-') || (start !== INDEX_PROXY_MIN_START && start === ratioMinimumStart(ratioParameters)) ? start : start.slice(0, 4)}至数据最新日</button>)}</div>}{detail.backtest_min_start && detail.backtest_min_start <= '2010-01-01' && <div className="qs-range-presets" role="group" aria-label="回测区间快捷选择"><span>回测区间</span>{[{label:'2010—2015',start:'2010-01-01',end:'2015-12-31'},{label:'2010至最新',start:'2010-01-01',end:''},{label:'2016至最新',start:'2016-01-01',end:''}].map(range => <button key={range.label} type="button" aria-pressed={backtestStart === range.start && asOf === range.end} onClick={() => {setBacktestStart(range.start);setAsOf(range.end)}}>{range.label}</button>)}<small>仅设置日期；点击下方回测按钮运行。2010—2015为训练前历史对照，冻结权重不变。</small></div>}<div className="qs-inputs"><label>{isStyleRotation ? '回测初始资金／参考权益（元）' : '账户总权益（元）'}<input type="number" disabled={isCalculating(job)} min="1" value={capital} onChange={e => setCapital(e.target.value)} /></label><label>回测开始日<input aria-label="回测开始日" type="date" min={minimumStart} max={asOf || undefined} value={backtestStart} onChange={e => setBacktestStart(e.target.value)} /><small>支持从{minimumStart}开始；从较近日期可缩短重算范围。</small></label><label>计算截至日<input type="date" min={backtestStart || minimumStart} value={asOf} onChange={e => setAsOf(e.target.value)} /><small>{isRatioRotation ? `留空使用当前口径最新日 ${ratioDataEnd || '待更新'}；${ratioParameters.data_mode === 'ETF_STOCK' && ratioParameters.stock_weight > 0 ? '单股研究输入版本单独校验' : '行情与指数在数据管理更新'}。` : '留空使用本地行情最新日，输入不足会明确报错。'}</small></label></div>{isCalculating(job) && <p role="note">日期和因子选项可先修改，供下一次计算；当前任务仍按启动时设置运行。</p>}{!isRatioRotation && <div className="qs-factor-cache-option"><label><input type="checkbox" checked={rebuildFactors} onChange={e => { setRebuildFactors(e.target.checked); try { window.localStorage.setItem('alpha-research.quality-rebuild-factors', String(e.target.checked)) } catch { /* Optional preference storage. */ } }} />强制重建因子</label><p>{isStyleRotation ? '该选项用于银行信号账户的因子；ETF账户不计算选股因子。' : '默认不勾选：复用校验通过的历史因子，只补算缺少日期。无兼容缓存、历史来源更正或公式变化时自动重建。'}</p></div>}{!isRatioRotation && <label>当前持仓（可留空）<textarea disabled={isCalculating(job)} placeholder={isStyleRotation ? '每行：ETF代码 份数\n例如 159915.SZ 1000' : '每行：证券代码 股数\n例如 600036.SH 1000'} value={holdings} onChange={e => setHoldings(e.target.value)} /></label>}<button className="primary" disabled={loading || isCalculating(job) || !!detail.evidence_error} onClick={() => void calculate()}>{isCalculating(job) ? '正在计算…' : '回测／更新最新信号'}</button>{job && !isCalculating(job) && <p role="status">{job.status === 'RUNNING' ? `${job.phase || '正在计算'} ${num(job.progress, 0)}%` : job.status === 'STOPPED' ? '本次回测已停止，未完成结果已清理；已校验因子缓存和上次成功结果保留。' : job.status === 'STOPPED' ? '本次回测已停止，未完成结果已清理；已校验因子缓存和上次成功结果保留。' : job.status === 'FAIL' ? (previousDateRestrictionFailure ? '上次计算因旧日期限制中断；现已按PIT开放，请重新计算。' : `计算失败：${job.error}`) : detail.calculation_state === 'UP_TO_DATE' ? (isRotationMode(signal?.calculation_mode) ? '轮动回测完成，结果已保存' : signal?.calculation_mode === 'RULE_REPLAY_V1' ? '规则重算完成，结果已保存' : signal?.calculation_mode === 'INCREMENTAL_LOCAL_INPUTS_V1' ? '缓存／增量计算完成，结果已保存' : '全量重算完成，结果已保存') : '此前结果已保存，仍需完成当前全量重算'}</p>}
           {signal && <><div className="qs-facts"><span>行情截至 {signal.as_of}</span><span>本次计算资金 {num(signal.capital_cny, 0)} 元</span><span>{isRatioRotation ? '收盘信号' : '最近选股信号'} {signal.signal_date}</span><span>{isStyleRotation ? '收盘目标仓位' : '目标股票仓位'} {pct(signal.target_exposure)}</span><span>{isRatioRotation ? '信号与实际成交请查看本次回测明细' : signal.due ? '存在下个交易日待执行信号' : '当前不是调仓信号日'}</span></div>{signal.warnings.length > 0 && <details><summary>本次运行说明（{signal.warnings.length}条）</summary>{signal.warnings.map((w, i) => <p className="qs-warning" key={i}>{w}</p>)}</details>}<details><summary>输入版本与截止日期</summary><ul>{signal.input_bindings.map(b => <li key={b.factor_id}>{b.factor_id} · 截至 {b.end} · {b.release_id.slice(0, 22)}</li>)}</ul></details></>}
         </section>}
       </>}</div></div>

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 import FactorAssetLibrary from './FactorAssetLibrary'
 import FactorLibrary from './FactorLibrary'
@@ -48,16 +48,32 @@ const PIPELINE_NAMES: Record<string, string> = {
 }
 
 const DEFAULT_STAGES: UiStageId[] = ['m4_1', 'm4_2']
-const CapitalAllocation = lazy(() => import('./CapitalAllocation'))
-type View = 'CALCULATE' | 'ASSETS' | 'STRATEGY' | 'ROTATION' | 'SINGLE_FACTOR_REPORTS' | 'STRATEGY_HISTORY' | 'DATA' | 'QUALITY' | 'ALLOCATION' | 'SCHEDULER'
 const VIEW_STORAGE_KEY = 'alpha-research.current-view'
 const FACTOR_JOB_STORAGE_KEY = 'alpha-research.factor-job-id'
 const SHOW_ROTATION_MENU = false
+const NAV_GROUPS = [
+  { label: '数据与调度', items: [
+    { view: 'DATA', label: '数据管理' },
+    { view: 'SCHEDULER', label: '调度管理' },
+  ] },
+  { label: '因子', items: [
+    { view: 'CALCULATE', label: '因子计算' },
+    { view: 'ASSETS', label: '因子资产库' },
+    { view: 'SINGLE_FACTOR_REPORTS', label: '单因子报告' },
+  ] },
+  { label: '策略', items: [
+    { view: 'QUALITY', label: '优质策略' },
+    { view: 'STRATEGY', label: '因子策略' },
+    { view: 'STRATEGY_HISTORY', label: '历史回测结果' },
+    { view: 'ROTATION', label: '轮动回测' },
+  ] },
+] as const
+type View = (typeof NAV_GROUPS)[number]['items'][number]['view']
 
 function savedView(): View {
   const value = window.localStorage.getItem(VIEW_STORAGE_KEY)
   if (value === 'ROTATION' && !SHOW_ROTATION_MENU) return 'STRATEGY'
-  return value === 'SCHEDULER' || value === 'ASSETS' || value === 'STRATEGY' || value === 'ROTATION' || value === 'SINGLE_FACTOR_REPORTS' || value === 'STRATEGY_HISTORY' || value === 'DATA' || value === 'QUALITY' || value === 'ALLOCATION' ? value : 'CALCULATE'
+  return NAV_GROUPS.flatMap(group => [...group.items]).find(item => item.view === value)?.view ?? 'CALCULATE'
 }
 
 function compactId(value: string) {
@@ -456,18 +472,45 @@ export default function App() {
   const configuredStages = job?.configured_stages.length ? job.configured_stages : preflight?.resolved_stages || []
   const completed = new Set(job?.completed_stages || [])
   const progress = configuredStages.length ? Math.round((completed.size / configuredStages.length) * 100) : 0
+  const activeGroup = NAV_GROUPS.find(group => group.items.some(item => item.view === view))!
+  const running: Partial<Record<View, boolean>> = {
+    CALCULATE: factorCalculationRunning,
+    STRATEGY: factorStrategyRunning,
+    ROTATION: SHOW_ROTATION_MENU && rotationRunning,
+  }
+  const warmQuality = () => void preloadQualityStrategies()
 
   return (
     <main>
       <header className="topbar">
         <div className="brand"><span className="brand-mark">M4</span><div><b>因子研究台</b><small>FACTOR EVIDENCE WORKBENCH</small></div></div>
-        <nav className="main-nav"><button className={view === 'DATA' ? 'active' : ''} onClick={() => setView('DATA')}>数据管理</button><button className={view === 'SCHEDULER' ? 'active' : ''} onClick={() => setView('SCHEDULER')}>调度管理</button><button className={view === 'CALCULATE' ? 'active' : ''} onClick={() => setView('CALCULATE')}>因子计算{factorCalculationRunning && <i className="nav-running-dot" />}</button><button className={view === 'ASSETS' ? 'active' : ''} onClick={() => setView('ASSETS')}>因子资产库</button><button className={view === 'STRATEGY' ? 'active' : ''} onClick={() => setView('STRATEGY')}>因子策略{factorStrategyRunning && <i className="nav-running-dot" />}</button>{SHOW_ROTATION_MENU && <button className={view === 'ROTATION' ? 'active' : ''} onClick={() => setView('ROTATION')}>轮动回测{rotationRunning && <i className="nav-running-dot" />}</button>}<button className={view === 'SINGLE_FACTOR_REPORTS' ? 'active' : ''} onClick={() => setView('SINGLE_FACTOR_REPORTS')}>单因子报告</button><button className={view === 'STRATEGY_HISTORY' ? 'active' : ''} onClick={() => setView('STRATEGY_HISTORY')}>历史回测结果</button><button className={view === 'QUALITY' ? 'active' : ''} onMouseEnter={() => void preloadQualityStrategies()} onFocus={() => void preloadQualityStrategies()} onClick={() => setView('QUALITY')}>优质策略</button><button className={view === 'ALLOCATION' ? 'active' : ''} onClick={() => setView('ALLOCATION')}>资金分配</button></nav>
+        <nav className="main-nav" aria-label="功能分类">
+          {NAV_GROUPS.map(group => {
+            const active = group === activeGroup
+            const first = group.items[0].view
+            const preload = first === 'QUALITY' ? warmQuality : undefined
+            return <button key={group.label} type="button" className={active ? 'active' : ''} aria-pressed={active}
+              onMouseEnter={preload} onFocus={preload} onClick={() => { if (!active) setView(first) }}>
+              {group.label}{group.items.some(item => running[item.view]) && <i className="nav-running-dot" aria-label="有任务运行中" />}
+            </button>
+          })}
+        </nav>
         <div className={`api-state ${apiOnline ? 'online' : ''}`}><i />{apiOnline ? '计算后端已连接' : '计算后端未连接'}</div>
       </header>
+      <nav className="main-nav section-nav" aria-label={`${activeGroup.label}菜单`}>
+        {activeGroup.items.filter(item => item.view !== 'ROTATION' || SHOW_ROTATION_MENU).map(item => {
+          const active = item.view === view
+          const preload = item.view === 'QUALITY' ? warmQuality : undefined
+          return <button key={item.view} type="button" className={active ? 'active' : ''} aria-current={active ? 'page' : undefined}
+            onMouseEnter={preload} onFocus={preload} onClick={() => setView(item.view)}>
+            {item.label}{running[item.view] && <i className="nav-running-dot" aria-label="有任务运行中" />}
+          </button>
+        })}
+      </nav>
 
       {error && <div className="error-banner"><b>没有继续执行</b><span>{error}</span><button onClick={() => setError('')}>×</button></div>}
 
-      {view === 'SCHEDULER' ? <SchedulerManager /> : view === 'ALLOCATION' ? <Suspense fallback={<div className="ca-page">正在加载资金分配…</div>}><CapitalAllocation /></Suspense> : view === 'QUALITY' ? <QualityStrategies /> : view === 'DATA' ? <DataManager /> : view === 'STRATEGY' ? <StrategyBacktest /> : view === 'ROTATION' ? <RotationBacktest onOpenFactorCalculate={() => setView('CALCULATE')} onOpenHistory={() => setView('STRATEGY_HISTORY')} /> : view === 'SINGLE_FACTOR_REPORTS' ? <SingleFactorReports onOpenRunning={() => setView('STRATEGY')} /> : view === 'STRATEGY_HISTORY' ? <StrategyBacktestHistory onOpenRunning={(strategyType) => setView(strategyType === 'QUALITY' ? 'QUALITY' : strategyType === 'ROTATION' ? 'ROTATION' : 'STRATEGY')} /> : view === 'CALCULATE' ? <>
+      {view === 'SCHEDULER' ? <SchedulerManager /> : view === 'QUALITY' ? <QualityStrategies /> : view === 'DATA' ? <DataManager /> : view === 'STRATEGY' ? <StrategyBacktest /> : view === 'ROTATION' ? <RotationBacktest onOpenFactorCalculate={() => setView('CALCULATE')} onOpenHistory={() => setView('STRATEGY_HISTORY')} /> : view === 'SINGLE_FACTOR_REPORTS' ? <SingleFactorReports onOpenRunning={() => setView('STRATEGY')} /> : view === 'STRATEGY_HISTORY' ? <StrategyBacktestHistory onOpenRunning={(strategyType) => setView(strategyType === 'QUALITY' ? 'QUALITY' : strategyType === 'ROTATION' ? 'ROTATION' : 'STRATEGY')} /> : view === 'CALCULATE' ? <>
       <FactorLibrary selected={selectedFactor} onSelect={chooseFactor} refreshKey={catalogRefresh}
         batchMode={batchMode} batchSelected={batchSelected} onBatchModeChange={setBatchMode}
         onBatchToggle={(factor) => setBatchSelected((current) => {
