@@ -483,7 +483,7 @@ export default function App() {
   return (
     <main>
       <header className="topbar">
-        <div className="brand"><span className="brand-mark">M4</span><div><b>因子研究台</b><small>FACTOR EVIDENCE WORKBENCH</small></div></div>
+        <div className="brand"><span className="brand-mark">QS</span><div><b>量化策略研究台</b><small>QUANT STRATEGY WORKBENCH</small></div></div>
         <nav className="main-nav" aria-label="功能分类">
           {NAV_GROUPS.map(group => {
             const active = group === activeGroup
